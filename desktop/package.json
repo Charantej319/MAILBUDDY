@@ -1,0 +1,16 @@
+{
+  "name": "phishguard-desktop",
+  "productName": "MailBuddy",
+  "private": true,
+  "version": "1.0.0",
+  "description": "MailBuddy desktop shell - launches the local FastAPI backend and shows the UI",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^26.15.3"
+  }
+}

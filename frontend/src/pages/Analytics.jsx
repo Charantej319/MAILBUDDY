@@ -208,7 +208,7 @@ function Analytics() {
         </div>
         <div className="card-body">
           <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-4)' }}>
-            PhishGuard uses evidence-weighted scoring with cross-signal correlation.
+            MailBuddy uses evidence-weighted scoring with cross-signal correlation.
             Each category contributes a maximum number of points to the final risk score (0-100).
             Confidence is calculated independently based on available evidence.
           </p>

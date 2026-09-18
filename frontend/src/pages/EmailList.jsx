@@ -2,12 +2,14 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import { formatDateTime } from '../utils/time'
+import { PRIORITY_LEVELS, PRIORITY_CATEGORIES, priorityStyle, categoryLabel } from '../utils/priority'
 
 function EmailList({ gmailStatus }) {
   const [emails, setEmails] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [filter, setFilter] = useState('all')
+  const [pfilter, setPfilter] = useState('all')
   const [search, setSearch] = useState('')
   const [syncing, setSyncing] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -89,6 +91,13 @@ function EmailList({ gmailStatus }) {
       const map = { safe: 'SAFE', low: 'LOW RISK', suspicious: 'SUSPICIOUS', high: 'HIGH RISK' }
       if (email.classification !== map[filter]) return false
     }
+    if (pfilter !== 'all') {
+      if (pfilter.startsWith('p:')) {
+        if ((email.priority?.level || '') !== pfilter.slice(2)) return false
+      } else if (pfilter.startsWith('c:')) {
+        if ((email.priority?.category || 'GENERAL') !== pfilter.slice(2)) return false
+      }
+    }
     if (search) {
       const q = search.toLowerCase()
       return (
@@ -100,6 +109,20 @@ function EmailList({ gmailStatus }) {
     }
     return true
   })
+
+  const pfilterCounts = {
+    all: emails.length,
+    'p:CRITICAL': emails.filter(e => e.priority?.level === 'CRITICAL').length,
+    'p:HIGH': emails.filter(e => e.priority?.level === 'HIGH').length,
+    'p:IMPORTANT': emails.filter(e => e.priority?.level === 'IMPORTANT').length,
+    'p:NORMAL': emails.filter(e => e.priority?.level === 'NORMAL').length,
+    'p:LOW': emails.filter(e => e.priority?.level === 'LOW').length,
+    'c:SECURITY': emails.filter(e => e.priority?.category === 'SECURITY').length,
+    'c:JOB': emails.filter(e => e.priority?.category === 'JOB').length,
+    'c:INTERNSHIP': emails.filter(e => e.priority?.category === 'INTERNSHIP').length,
+    'c:ACADEMIC': emails.filter(e => e.priority?.category === 'ACADEMIC').length,
+    'c:PROMOTION': emails.filter(e => e.priority?.category === 'PROMOTION').length,
+  }
 
   const filterCounts = {
     all: emails.length,
@@ -228,6 +251,25 @@ function EmailList({ gmailStatus }) {
         </div>
       </div>
 
+      {/* Priority / category filters (MailBuddy) — separate axis from security */}
+      <div className="email-toolbar mb-priority-toolbar">
+        <div className="filter-tabs">
+          {[{ key: 'all', label: 'Any priority' },
+            ...PRIORITY_LEVELS.map(l => ({ key: `p:${l}`, label: priorityStyle(l).label })),
+            ...PRIORITY_CATEGORIES.filter(c => c !== 'GENERAL').map(c => ({ key: `c:${c}`, label: categoryLabel(c) })),
+          ].map(f => (
+            <button
+              key={f.key}
+              className={`filter-tab ${pfilter === f.key ? 'active' : ''}`}
+              onClick={() => setPfilter(f.key)}
+            >
+              {f.label}
+              <span className="filter-count">{pfilterCounts[f.key] ?? 0}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Table */}
       {loading ? (
         <div className="loading-state">
@@ -241,6 +283,7 @@ function EmailList({ gmailStatus }) {
               <thead>
                 <tr>
                   <th style={{ width: 60 }}>Risk</th>
+                  <th style={{ width: 130 }}>Priority</th>
                   <th>Sender</th>
                   <th>Subject</th>
                   <th style={{ width: 50 }}>Score</th>
@@ -257,6 +300,14 @@ function EmailList({ gmailStatus }) {
                       <span className={`badge ${getBadgeClass(email.classification)}`}>
                         {getShortClassification(email.classification)}
                       </span>
+                    </td>
+                    <td>
+                      <div className="mb-cell-priority">
+                        <span className={`mb-badge ${email.priority?.level ? priorityStyle(email.priority.level).cls : 'prio-pending'}`}>
+                          {email.priority?.level ? priorityStyle(email.priority.level).label : 'PENDING'}
+                        </span>
+                        <span className="mb-cell-category">{categoryLabel(email.priority?.category)}</span>
+                      </div>
                     </td>
                     <td className="cell-ellipsis">
                       {email.sender_email || email.sender}

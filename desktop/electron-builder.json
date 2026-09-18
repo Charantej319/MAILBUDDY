@@ -1,0 +1,46 @@
+{
+  "appId": "com.phishguard.desktop",
+  "productName": "MailBuddy",
+  "directories": {
+    "output": "dist",
+    "buildResources": "."
+  },
+  "files": [
+    "main.js",
+    "backend.js",
+    "preload.js",
+    "package.json",
+    "icon.ico"
+  ],
+  "extraResources": [
+    {
+      "from": "../packaging/dist/phishguard-backend",
+      "to": "backend/phishguard-backend",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "icon.ico",
+      "to": "icon.ico"
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "MailBuddy",
+    "artifactName": "MailBuddy-Setup-${version}.${ext}",
+    "deleteAppDataOnUninstall": false,
+    "differentialPackage": false
+  }
+}

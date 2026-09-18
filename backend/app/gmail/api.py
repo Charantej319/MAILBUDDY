@@ -97,6 +97,14 @@ def _store_gmail_analysis(parsed, results: dict, db: Session,
     db.add(analysis)
     db.commit()
     db.refresh(analysis)
+
+    # MailBuddy: heuristic priority at ingestion time (never blocks or fails sync).
+    try:
+        from ..mailbuddy.ingest import apply_ingestion_priority
+        apply_ingestion_priority(analysis, results, db)
+    except Exception:  # noqa: BLE001
+        pass
+
     return analysis
 
 

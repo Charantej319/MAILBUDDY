@@ -1,27 +1,68 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
 import { formatRelativeTime } from '../utils/time'
+import { PRIORITY_LEVELS, priorityStyle, categoryLabel, formatDeadline } from '../utils/priority'
+import { MailBuddyLogo } from '../components/MailBuddyBrand'
 
 function Dashboard({ gmailStatus }) {
+  const [summary, setSummary] = useState(null)
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [activeLevel, setActiveLevel] = useState(null)
+  const [levelEmails, setLevelEmails] = useState(null)
   const navigate = useNavigate()
 
   useEffect(() => {
-    loadStats()
+    load()
   }, [])
 
-  const loadStats = async () => {
+  const load = async () => {
     try {
-      const data = await api.getStatistics()
-      setStats(data)
+      const [priority, statistics] = await Promise.all([
+        api.getPrioritySummary().catch(() => null),
+        api.getStatistics().catch(() => null),
+      ])
+      setSummary(priority)
+      setStats(statistics)
+      // Fire a bounded AI refinement pass for pending emails (never blocks UI).
+      if (priority?.pending > 0) {
+        api.analyzeBatchPriorities(6).catch(() => {})
+      }
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
   }
+
+  const showLevel = async (level) => {
+    if (level === null) {
+      setActiveLevel(null)
+      setLevelEmails(null)
+      return
+    }
+    setActiveLevel(level)
+    try {
+      const data = await api.getPriorityEmails(level)
+      setLevelEmails(data.emails || [])
+    } catch {
+      setLevelEmails([])
+    }
+  }
+
+  const attention = summary?.attention || []
+  const counts = summary?.counts || {}
+  const pending = summary?.pending || 0
+  const threats = (stats?.high_risk_count || 0) + (stats?.suspicious_count || 0)
+
+  // Greeting
+  const greeting = useMemo(() => {
+    const h = new Date().getHours()
+    if (h < 12) return 'Good morning'
+    if (h < 18) return 'Good afternoon'
+    return 'Good evening'
+  }, [])
 
   if (loading) {
     return (
@@ -33,16 +74,10 @@ function Dashboard({ gmailStatus }) {
   }
 
   const total = stats?.total_emails || 0
-  const high = stats?.high_risk_count || 0
-  const suspicious = stats?.suspicious_count || 0
-  const safe = stats?.safe_count || 0
-  const low = stats?.low_risk_count || 0
-  const threats = high + suspicious
-  const recentThreats = stats?.recent_threats || []
 
   return (
     <div>
-      {/* Gmail Connection Prompt */}
+      {/* Gmail onboarding (unchanged behavior) */}
       {total === 0 && !gmailStatus?.connected && (
         <div className="onboarding-card">
           <div className="onboarding-icon">
@@ -52,7 +87,7 @@ function Dashboard({ gmailStatus }) {
           </div>
           <div className="onboarding-content">
             <h3>Connect your Gmail account</h3>
-            <p>Analyze incoming emails for phishing, suspicious links, social engineering and authentication anomalies.</p>
+            <p>MailBuddy analyzes incoming email for phishing, suspicious links and social engineering — and surfaces what actually needs your attention.</p>
             <div className="onboarding-actions">
               <button className="btn btn-primary" onClick={() => navigate('/settings')}>Connect Gmail</button>
               <span className="onboarding-separator">or</span>
@@ -62,70 +97,105 @@ function Dashboard({ gmailStatus }) {
         </div>
       )}
 
-      {/* Operational Overview */}
-      <div className="page-header">
-        <div className="page-header-left">
-          <h1>Dashboard</h1>
-          <p>Operational overview — what needs your attention</p>
+      {/* MailBuddy header */}
+      <div className="mb-hero">
+        <div className="mb-hero-greeting">
+          <div className="mb-hero-brand">
+            <MailBuddyLogo size={26} />
+            <span>MailBuddy</span>
+          </div>
+          <h1>{greeting}</h1>
+          <p>Here's what needs your attention.</p>
         </div>
-        <div className="page-header-actions">
-          {gmailStatus?.connected && (
-            <Link to="/emails" className="btn btn-primary">View Emails</Link>
-          )}
-          {!gmailStatus?.connected && total === 0 && (
-            <button className="btn btn-secondary" onClick={() => navigate('/settings')}>Connect Gmail</button>
-          )}
-        </div>
+        {threats > 0 && (
+          <div className="mb-hero-security" title="From the security engine — separate from priority">
+            <span className="mb-hero-security-count">{threats}</span>
+            <span className="mb-hero-security-label">security flag{threats === 1 ? '' : 's'} detected</span>
+          </div>
+        )}
       </div>
 
-      {/* Compact Metrics */}
-      <div className="metrics-row">
-        <div className="metric-card">
-          <div className="metric-label">Emails Analyzed</div>
-          <div className="metric-value">{total}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Threats Detected</div>
-          <div className="metric-value" style={{ color: threats > 0 ? 'var(--high-risk)' : 'var(--safe)' }}>{threats}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Gmail Status</div>
-          <div className="metric-value" style={{ fontSize: 'var(--text-md)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-            <span className={`gmail-status-dot ${gmailStatus?.connected ? 'connected' : ''}`}></span>
-            {gmailStatus?.connected ? 'Connected' : 'Not Connected'}
-          </div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Last Sync</div>
-          <div className="metric-value" style={{ fontSize: 'var(--text-sm)', fontWeight: 500 }}>
-            {gmailStatus?.last_sync ? formatRelativeTime(gmailStatus.last_sync) : 'Never'}
-          </div>
-        </div>
+      {/* Priority level filter strip */}
+      <div className="mb-priority-strip" role="tablist" aria-label="Filter by priority">
+        {PRIORITY_LEVELS.map((level) => (
+          <button
+            key={level}
+            role="tab"
+            aria-selected={activeLevel === level}
+            className={`mb-prio-pill ${priorityStyle(level).cls} ${activeLevel === level ? 'active' : ''}`}
+            onClick={() => showLevel(activeLevel === level ? null : level)}
+          >
+            {priorityStyle(level).label}
+            <span className="mb-prio-count">{counts[level] || 0}</span>
+          </button>
+        ))}
       </div>
 
-      {/* Threats Requiring Attention */}
+      {/* Level drill-down */}
+      {activeLevel && (
+        <div className="card" style={{ marginBottom: 'var(--space-4)' }}>
+          <div className="card-header">
+            <span className="card-title">{priorityStyle(activeLevel).label} emails</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => showLevel(null)}>Clear filter</button>
+          </div>
+          <div className="card-body" style={{ padding: 0 }}>
+            {levelEmails === null ? (
+              <div className="empty-state-inline"><span className="empty-state-text">Loading…</span></div>
+            ) : levelEmails.length === 0 ? (
+              <div className="empty-state-inline"><span className="empty-state-text">No emails at this priority level.</span></div>
+            ) : (
+              <div className="mb-email-rows">
+                {levelEmails.map((email) => (
+                  <div key={email.id} className="mb-email-row" onClick={() => navigate(`/emails/${email.id}`)}>
+                    <div className="mb-email-row-main">
+                      <div className="mb-email-row-sender">{email.sender || email.sender_email}</div>
+                      <div className="mb-email-row-subject">{email.subject || '(no subject)'}</div>
+                    </div>
+                    <div className="mb-email-row-side">
+                      <PriorityBadge level={email.priority} />
+                      <CategoryBadge category={email.category} />
+                      <SecurityBadge classification={email.security} riskScore={email.risk_score} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Attention required */}
       <div className="card" style={{ marginBottom: 'var(--space-4)' }}>
         <div className="card-header">
-          <span className="card-title">Threats Requiring Attention</span>
-          {threats > 0 && <Link to="/emails" className="btn btn-ghost btn-sm">View all</Link>}
+          <span className="card-title">Attention required</span>
+          {pending > 0 && (
+            <span className="mb-pending-note" title="AI refinement runs in the background">
+              {pending} awaiting deeper analysis
+            </span>
+          )}
         </div>
         <div className="card-body" style={{ padding: 0 }}>
-          {recentThreats.length > 0 ? (
-            <div className="threat-list">
-              {recentThreats.map(email => (
-                <div key={email.id} className="threat-list-item" onClick={() => navigate(`/emails/${email.id}`)}>
-                  <div className="threat-list-score" style={{ color: getScoreColor(email.risk_score) }}>
-                    {email.risk_score.toFixed(0)}
+          {attention.length > 0 ? (
+            <div className="mb-attention-list">
+              {attention.map((email) => (
+                <div key={email.id} className="mb-attention-item" onClick={() => navigate(`/emails/${email.id}`)}>
+                  <div className="mb-attention-main">
+                    <div className="mb-attention-sender">{email.sender || email.sender_email}</div>
+                    <div className="mb-attention-subject">{email.subject || '(no subject)'}</div>
+                    {email.reasons?.length > 0 && (
+                      <div className="mb-attention-reason">{email.reasons[0]}</div>
+                    )}
                   </div>
-                  <div className="threat-list-content">
-                    <div className="threat-list-subject">{email.subject || '(no subject)'}</div>
-                    <div className="threat-list-sender">{email.sender_email || email.sender}</div>
-                  </div>
-                  <div className="threat-list-meta">
-                    <span className={`badge ${getBadgeClass(email.classification)}`}>
-                      {getShortClassification(email.classification)}
-                    </span>
-                    <span className="threat-list-time">{formatRelativeTime(email.analyzed_at || email.date)}</span>
+                  <div className="mb-attention-meta">
+                    <div className="mb-attention-badges">
+                      <PriorityBadge level={email.priority} />
+                      <CategoryBadge category={email.category} />
+                      <SecurityBadge classification={email.security} riskScore={email.risk_score} />
+                    </div>
+                    <div className="mb-attention-extras">
+                      {email.deadline && <span className="mb-deadline">Deadline: {formatDeadline(email.deadline)}</span>}
+                      <span className="mb-attention-time">{formatRelativeTime(email.date)}</span>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -134,29 +204,28 @@ function Dashboard({ gmailStatus }) {
             <div className="empty-state-inline">
               <span className="empty-state-text">
                 {total === 0
-                  ? 'No emails analyzed yet. Connect Gmail or upload .eml files.'
-                  : 'No threats detected. Your inbox appears clean.'}
+                  ? 'No emails yet. Connect Gmail or upload .eml files to get started.'
+                  : 'Nothing urgent right now. Your important mail will appear here.'}
               </span>
             </div>
           )}
         </div>
       </div>
 
-      {/* Risk Distribution + Top Domains */}
+      {/* Security section — separate axis, never merged with priority */}
       <div className="grid-2">
-        {/* Risk Distribution */}
         <div className="card">
           <div className="card-header">
-            <span className="card-title">Risk Distribution</span>
+            <span className="card-title">Security overview</span>
+            <Link to="/analytics" className="btn btn-ghost btn-sm">Analytics</Link>
           </div>
           <div className="card-body">
             {total > 0 ? (
               <div className="risk-distribution">
                 {[
-                  { label: 'Safe', count: safe, cls: 'safe', color: 'var(--safe)' },
-                  { label: 'Low Risk', count: low, cls: 'low', color: 'var(--low-risk)' },
-                  { label: 'Suspicious', count: suspicious, cls: 'suspicious', color: 'var(--suspicious)' },
-                  { label: 'High Risk', count: high, cls: 'high', color: 'var(--high-risk)' },
+                  { label: 'Safe', count: stats?.safe_count || 0, cls: 'safe', color: 'var(--safe)' },
+                  { label: 'Suspicious', count: stats?.suspicious_count || 0, cls: 'suspicious', color: 'var(--suspicious)' },
+                  { label: 'High Risk', count: stats?.high_risk_count || 0, cls: 'high', color: 'var(--high-risk)' },
                 ].map(item => (
                   <div key={item.label} className="risk-dist-row">
                     <div className="risk-dist-label">
@@ -165,42 +234,43 @@ function Dashboard({ gmailStatus }) {
                     </div>
                     <div className="risk-dist-bar-wrap">
                       <div className="risk-dist-bar">
-                        <div className={`risk-bar-fill ${item.cls}`} style={{ width: `${(item.count / total) * 100}%` }}></div>
+                        <div className={`risk-bar-fill ${item.cls}`} style={{ width: `${total ? (item.count / total) * 100 : 0}%` }}></div>
                       </div>
                       <span className="risk-dist-count">{item.count}</span>
-                      <span className="risk-dist-pct">({total > 0 ? ((item.count / total) * 100).toFixed(0) : 0}%)</span>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="empty-state-inline">
-                <span className="empty-state-text">No data yet.</span>
-              </div>
+              <div className="empty-state-inline"><span className="empty-state-text">No data yet.</span></div>
             )}
           </div>
         </div>
 
-        {/* Top Sender Domains */}
         <div className="card">
           <div className="card-header">
-            <span className="card-title">Top Sender Domains</span>
+            <span className="card-title">Mailbox</span>
           </div>
           <div className="card-body">
-            {stats?.top_sender_domains?.length > 0 ? (
-              <div className="domain-list">
-                {stats.top_sender_domains.slice(0, 8).map((item, idx) => (
-                  <div key={idx} className="domain-row">
-                    <span className="domain-name">{item.domain}</span>
-                    <span className="domain-count">{item.count}</span>
-                  </div>
-                ))}
+            <div className="mb-mailbox-facts">
+              <div className="mb-fact">
+                <span className="mb-fact-label">Emails analyzed</span>
+                <span className="mb-fact-value">{total}</span>
               </div>
-            ) : (
-              <div className="empty-state-inline">
-                <span className="empty-state-text">No data yet.</span>
+              <div className="mb-fact">
+                <span className="mb-fact-label">Gmail</span>
+                <span className="mb-fact-value" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-sm)' }}>
+                  <span className={`gmail-status-dot ${gmailStatus?.connected ? 'connected' : ''}`}></span>
+                  {gmailStatus?.connected ? 'Connected' : 'Not connected'}
+                </span>
               </div>
-            )}
+              <div className="mb-fact">
+                <span className="mb-fact-label">Last sync</span>
+                <span className="mb-fact-value" style={{ fontSize: 'var(--text-sm)' }}>
+                  {gmailStatus?.last_sync ? formatRelativeTime(gmailStatus.last_sync) : 'Never'}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -208,24 +278,30 @@ function Dashboard({ gmailStatus }) {
   )
 }
 
-function getScoreColor(score) {
-  if (score < 25) return 'var(--safe)'
-  if (score < 50) return 'var(--low-risk)'
-  if (score < 75) return 'var(--suspicious)'
-  return 'var(--high-risk)'
+function PriorityBadge({ level }) {
+  if (!level) return <span className="mb-badge prio-pending">PENDING</span>
+  const s = priorityStyle(level)
+  return <span className={`mb-badge ${s.cls}`}>{s.label}</span>
 }
 
-function getBadgeClass(classification) {
-  if (classification === 'SAFE') return 'badge-safe'
-  if (classification === 'LOW RISK') return 'badge-low'
-  if (classification === 'SUSPICIOUS') return 'badge-suspicious'
-  return 'badge-high'
+function CategoryBadge({ category }) {
+  return <span className="mb-badge mb-badge-category">{categoryLabel(category)}</span>
 }
 
-function getShortClassification(classification) {
-  if (classification === 'LOW RISK') return 'LOW'
-  if (classification === 'HIGH RISK') return 'HIGH'
-  return classification
+function SecurityBadge({ classification, riskScore }) {
+  const cls =
+    classification === 'SAFE' ? 'sec-safe' :
+    classification === 'SUSPICIOUS' ? 'sec-suspicious' :
+    classification === 'HIGH RISK' || classification === 'HIGH_RISK' ? 'sec-high' : 'sec-low'
+  const label = (classification || 'SAFE').replace('_', ' ')
+  return (
+    <span
+      className={`mb-badge ${cls}`}
+      title={`Security verdict from the detection engine${riskScore != null ? ` (score ${Number(riskScore).toFixed(0)}/100)` : ''}`}
+    >
+      {label}
+    </span>
+  )
 }
 
 export default Dashboard

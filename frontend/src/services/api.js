@@ -186,6 +186,75 @@ class ApiService {
     const response = await fetch(`${API_BASE}/health`);
     return response.json();
   }
+
+  // ── MailBuddy ──
+
+  async getMailBuddySettings() {
+    const response = await fetch(`${API_BASE}/mailbuddy/settings`);
+    if (!response.ok) throw new Error('Failed to fetch MailBuddy settings');
+    return response.json();
+  }
+
+  async updateMailBuddySettings(patch) {
+    const response = await fetch(`${API_BASE}/mailbuddy/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!response.ok) throw new Error('Failed to update MailBuddy settings');
+    return response.json();
+  }
+
+  async getPrioritySummary() {
+    const response = await fetch(`${API_BASE}/mailbuddy/priority/summary`);
+    if (!response.ok) throw new Error('Failed to fetch priority summary');
+    return response.json();
+  }
+
+  async getPriorityEmails(level, category) {
+    const params = new URLSearchParams();
+    if (level) params.set('level', level);
+    if (category) params.set('category', category);
+    const response = await fetch(`${API_BASE}/mailbuddy/priority/emails?${params}`);
+    if (!response.ok) throw new Error('Failed to fetch priority emails');
+    return response.json();
+  }
+
+  async analyzeBatchPriorities(limit = 10) {
+    const response = await fetch(`${API_BASE}/mailbuddy/priority/analyze-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limit }),
+    });
+    if (!response.ok) throw new Error('Priority batch analysis failed');
+    return response.json();
+  }
+
+  async askMailBuddy(question) {
+    const response = await fetch(`${API_BASE}/mailbuddy/assistant/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    if (!response.ok) throw new Error('Assistant request failed');
+    return response.json();
+  }
+
+  async getPendingNotifications() {
+    const response = await fetch(`${API_BASE}/mailbuddy/notifications/pending`);
+    if (!response.ok) return { enabled: false, notifications: [] };
+    return response.json();
+  }
+
+  async acknowledgeNotifications(keys) {
+    const response = await fetch(`${API_BASE}/mailbuddy/notifications/ack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys }),
+    });
+    if (!response.ok) return { marked: 0 };
+    return response.json();
+  }
 }
 
 export const api = new ApiService();

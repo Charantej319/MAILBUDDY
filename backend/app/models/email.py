@@ -7,11 +7,40 @@ timezone-aware ISO-8601 strings (see app.utils.timeutil) so the frontend
 can render them correctly in the user's local timezone.
 """
 
-from sqlalchemy import Column, String, Integer, DateTime, Text, Float
+from sqlalchemy import Column, String, Integer, DateTime, Text, Float, Boolean
 import uuid
 
 from ..database.connection import Base
 from ..utils.timeutil import iso_utc
+
+
+class AppSetting(Base):
+    """Server-side application settings (MailBuddy feature toggles).
+
+    Key/value storage for per-installation settings. Never stores secrets:
+    the Groq key lives only in backend configuration/environment.
+    """
+    __tablename__ = "app_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False)  # "true"/"false" or string values
+    updated_at = Column(DateTime, server_default=__import__("sqlalchemy").text("CURRENT_TIMESTAMP"))
+
+
+class NotificationLog(Base):
+    """Deduplication ledger for important-email notifications.
+
+    One row per (kind, email). The unique constraint on notification_key is
+    what prevents duplicate notifications when Gmail re-syncs the same message.
+    """
+    __tablename__ = "notification_log"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    notification_key = Column(String, nullable=False, unique=True)  # e.g. "priority:CRITICAL:<email_id>"
+    email_id = Column(String, nullable=True)  # EmailAnalysis.email_id (Gmail ID) when applicable
+    kind = Column(String, nullable=False)  # "priority" | "deadline"
+    delivered = Column(Integer, nullable=False, default=0)  # 0/1
+    created_at = Column(DateTime, server_default=__import__("sqlalchemy").text("CURRENT_TIMESTAMP"))
 
 
 class GmailToken(Base):
@@ -82,6 +111,18 @@ class EmailAnalysis(Base):
     ai_model = Column(String, nullable=True)
     ai_analyzed_at = Column(DateTime, nullable=True)
 
+    # MailBuddy priority analysis (importance != security risk; kept separate)
+    priority_level = Column(String, nullable=True)  # CRITICAL|HIGH|IMPORTANT|NORMAL|LOW
+    priority_category = Column(String, nullable=True)  # SECURITY|JOB|INTERNSHIP|ACADEMIC|PERSONAL|FINANCE|TRANSACTION|PROMOTION|GENERAL
+    priority_score = Column(Float, nullable=True)
+    priority_reasons = Column(Text, nullable=True)  # JSON list
+    priority_summary = Column(Text, nullable=True)
+    priority_deadline = Column(DateTime, nullable=True)  # confidently detected deadline (UTC)
+    priority_analyzed_at = Column(DateTime, nullable=True)
+    priority_model = Column(String, nullable=True)  # "heuristic" | "groq:<model>" | "heuristic-fallback"
+    priority_is_otp = Column(Boolean, nullable=True, default=False)
+    priority_is_unread = Column(Boolean, nullable=True, default=True)
+
     # Timestamps (UTC defaults; func.now() = SQLite CURRENT_TIMESTAMP = UTC)
     analyzed_at = Column(DateTime, server_default=__import__("sqlalchemy").text("CURRENT_TIMESTAMP"))
     created_at = Column(DateTime, server_default=__import__("sqlalchemy").text("CURRENT_TIMESTAMP"))
@@ -122,8 +163,24 @@ class EmailAnalysis(Base):
             "body_html": self.body_html,
             "message_id_header": self.message_id_header,
             "ai": self.ai_to_dict(),
+            "priority": self.priority_to_dict(),
             "analyzed_at": iso_utc(self.analyzed_at),
             "created_at": iso_utc(self.created_at),
+        }
+
+    def priority_to_dict(self):
+        """MailBuddy priority block. Null level means 'not analyzed yet'."""
+        return {
+            "level": self.priority_level,
+            "category": self.priority_category,
+            "score": self.priority_score,
+            "reasons": self._json(self.priority_reasons, []),
+            "summary": self.priority_summary,
+            "deadline": iso_utc(self.priority_deadline),
+            "analyzed_at": iso_utc(self.priority_analyzed_at),
+            "model": self.priority_model,
+            "is_otp": bool(self.priority_is_otp),
+            "is_unread": bool(self.priority_is_unread) if self.priority_is_unread is not None else True,
         }
 
     def ai_to_dict(self):

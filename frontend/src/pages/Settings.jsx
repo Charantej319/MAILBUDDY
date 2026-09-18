@@ -11,6 +11,27 @@ function Settings({ gmailStatus, setGmailStatus }) {
   const [error, setError] = useState(null)
   const [verifying, setVerifying] = useState(false)
   const verifiedRef = useRef(false)
+  const [mbSettings, setMbSettings] = useState(null)
+  const [mbSaving, setMbSaving] = useState(false)
+
+  useEffect(() => {
+    api.getMailBuddySettings().then((d) => setMbSettings(d.settings)).catch(() => setMbSettings(null))
+  }, [])
+
+  const toggleMbSetting = async (key) => {
+    if (mbSaving || !mbSettings) return
+    setMbSaving(true)
+    const next = { ...mbSettings, [key]: !mbSettings[key] }
+    setMbSettings(next) // optimistic
+    try {
+      const data = await api.updateMailBuddySettings({ [key]: next[key] })
+      setMbSettings(data.settings)
+    } catch {
+      setMbSettings(mbSettings) // revert on failure
+    } finally {
+      setMbSaving(false)
+    }
+  }
 
   const connected = gmailStatus?.connected || false
 
@@ -154,11 +175,50 @@ function Settings({ gmailStatus, setGmailStatus }) {
         </div>
       </div>
 
+      {/* MailBuddy Assistant & Priority */}
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <div className="settings-section-title">MailBuddy</div>
+          <div className="settings-section-desc">Assistant, smart priority and notifications. Disabling AI never disables the security engine.</div>
+        </div>
+        <div className="settings-section-body">
+          {mbSettings ? (
+            <div className="mb-settings-grid">
+              {[
+                { key: 'assistant_enabled', label: 'AI Assistant', desc: 'Read-only inbox assistant in the top bar' },
+                { key: 'smart_priority_enabled', label: 'Smart Priority', desc: 'AI-assisted importance classification' },
+                { key: 'important_notifications_enabled', label: 'Important Email Notifications', desc: 'For CRITICAL and HIGH priority email' },
+                { key: 'desktop_notifications_enabled', label: 'Desktop Notifications', desc: 'Native notifications in the desktop app' },
+              ].map((item) => (
+                <div key={item.key} className="mb-setting-row">
+                  <div className="mb-setting-text">
+                    <span className="mb-setting-label">{item.label}</span>
+                    <span className="mb-setting-desc">{item.desc}</span>
+                  </div>
+                  <button
+                    className={`mb-toggle ${mbSettings[item.key] ? 'on' : ''}`}
+                    onClick={() => toggleMbSetting(item.key)}
+                    disabled={mbSaving}
+                    role="switch"
+                    aria-checked={mbSettings[item.key]}
+                    aria-label={item.label}
+                  >
+                    <span className="mb-toggle-knob"></span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state-inline"><span className="empty-state-text">Settings unavailable.</span></div>
+          )}
+        </div>
+      </div>
+
       {/* Polling Configuration */}
       <div className="settings-section">
         <div className="settings-section-header">
           <div className="settings-section-title">Polling Configuration</div>
-          <div className="settings-section-desc">Configure how often PhishGuard checks for new emails</div>
+          <div className="settings-section-desc">Configure how often MailBuddy checks for new emails</div>
         </div>
         <div className="settings-section-body">
           <div className="app-info-grid">
@@ -216,7 +276,7 @@ function Settings({ gmailStatus, setGmailStatus }) {
             </div>
           </div>
           <div className="settings-note" style={{ marginTop: 'var(--space-4)' }}>
-            External threat intelligence providers are optional. PhishGuard's local detection engine remains fully functional without API keys.
+            External threat intelligence providers are optional. MailBuddy's local detection engine remains fully functional without API keys.
             Configure via environment variables: GOOGLE_SAFE_BROWSING_KEY, VIRUSTOTAL_KEY, URLHAUS_KEY
           </div>
         </div>
@@ -230,7 +290,7 @@ function Settings({ gmailStatus, setGmailStatus }) {
         <div className="settings-section-body">
           <div className="security-info">
             <p>
-              PhishGuard requests <strong>read-only</strong> Gmail access for email threat analysis.
+              MailBuddy requests <strong>read-only</strong> Gmail access for email threat analysis.
               It does not send, delete, modify, or reply to emails.
             </p>
             <p>

@@ -83,3 +83,12 @@ Desktop.ini
 secrets/
 credentials/
 tokens/
+
+# Desktop shell (Phase 2b) — build artifacts and dependencies
+desktop/node_modules/
+desktop/dist/
+desktop/out/
+
+# Packaging build artifacts (Phase 2c)
+packaging/build/
+packaging/dist/

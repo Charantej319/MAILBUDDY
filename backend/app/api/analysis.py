@@ -102,6 +102,13 @@ def _store_analysis(parsed_email, results: dict, db: Session,
     db.commit()
     db.refresh(analysis)
 
+    # MailBuddy: heuristic priority at ingestion time (additive, never fatal).
+    try:
+        from ..mailbuddy.ingest import apply_ingestion_priority
+        apply_ingestion_priority(analysis, results, db)
+    except Exception:  # noqa: BLE001
+        pass
+
     return analysis
 
 

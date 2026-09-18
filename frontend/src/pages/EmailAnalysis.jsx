@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { formatDateTime } from '../utils/time'
+import { priorityStyle, categoryLabel, formatDeadline } from '../utils/priority'
 import { sanitizeEmailHtml, defangUrl, containsUnsafeContent } from '../utils/sanitizeHtml'
 import { DetailErrorBoundary } from '../components/ErrorBoundary'
 
@@ -266,6 +267,53 @@ function EmailAnalysis() {
         </div>
       </div>
 
+      {/* MailBuddy Priority (importance — separate from security) */}
+      <div className="card" style={{ marginBottom: 'var(--space-4)' }}>
+        <div className="card-header">
+          <span className="card-title">MailBuddy Priority</span>
+          <span className="detail-panel-count">Importance — separate from the security verdict</span>
+        </div>
+        <div className="card-body">
+          {analysis.priority?.level ? (
+            <div>
+              <div className="mb-detail-grid">
+                <div>
+                  <div className="intel-label">Priority</div>
+                  <span className={`mb-badge ${priorityStyle(analysis.priority.level).cls}`} style={{ fontSize: 'var(--text-sm)' }}>
+                    {priorityStyle(analysis.priority.level).label}
+                  </span>
+                </div>
+                <div>
+                  <div className="intel-label">Category</div>
+                  <span className="mb-badge mb-badge-category" style={{ fontSize: 'var(--text-sm)' }}>{categoryLabel(analysis.priority.category)}</span>
+                </div>
+                {analysis.priority.deadline && (
+                  <div>
+                    <div className="intel-label">Deadline</div>
+                    <span className="intel-value">{formatDeadline(analysis.priority.deadline)}</span>
+                  </div>
+                )}
+              </div>
+              {analysis.priority.reasons?.length > 0 && (
+                <div style={{ marginTop: 'var(--space-3)' }}>
+                  <div className="intel-label">Why?</div>
+                  <ul className="mb-reason-list">
+                    {analysis.priority.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                  </ul>
+                </div>
+              )}
+              {analysis.priority.summary && (
+                <p style={{ marginTop: 'var(--space-3)', color: 'var(--text-secondary)' }}>{analysis.priority.summary}</p>
+              )}
+            </div>
+          ) : (
+            <div className="empty-state-inline">
+              <span className="empty-state-text">Priority analysis pending — the deterministic security analysis below is fully available.</span>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Security Analysis Summary */}
       <div className="card" style={{ marginBottom: 'var(--space-4)' }}>
         <div className="card-header">
@@ -397,11 +445,11 @@ function EmailAnalysis() {
         </div>
       </div>
 
-      {/* Why PhishGuard Flagged This */}
+      {/* Why Flagged (deterministic detection evidence) */}
       {topFindings.length > 0 && (
         <div className="card" style={{ marginBottom: 'var(--space-4)' }}>
           <div className="card-header">
-            <span className="card-title">Why PhishGuard Flagged This</span>
+            <span className="card-title">Why Flagged — Detection Evidence</span>
             <span className="detail-panel-count">{topFindings.length} top indicators</span>
           </div>
           <div className="card-body">

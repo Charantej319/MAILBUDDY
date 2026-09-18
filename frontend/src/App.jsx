@@ -5,6 +5,9 @@ import EmailList from './pages/EmailList'
 import EmailAnalysis from './pages/EmailAnalysis'
 import Analytics from './pages/Analytics'
 import Settings from './pages/Settings'
+import AssistantPanel from './components/AssistantPanel'
+import NotificationBridge from './components/NotificationBridge'
+import MailBuddyBrand from './components/MailBuddyBrand'
 import { api } from './services/api'
 
 const Icons = {
@@ -43,6 +46,7 @@ const Icons = {
 function App() {
   const location = useLocation()
   const [gmailStatus, setGmailStatus] = useState({ connected: false, email: null, last_sync: null })
+  const [assistantOpen, setAssistantOpen] = useState(false)
 
   useEffect(() => {
     api.getGmailStatus().then(setGmailStatus).catch(() => {})
@@ -64,8 +68,7 @@ function App() {
     <div className="app-layout">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <div className="sidebar-brand-icon">{Icons.shield}</div>
-          <span className="sidebar-brand-text">PhishGuard</span>
+          <MailBuddyBrand size={24} />
         </div>
 
         <nav className="sidebar-nav">
@@ -93,9 +96,20 @@ function App() {
       <div className="main-area">
         <header className="topbar">
           <span className="topbar-title">
-            {navItems.find(i => isActive(i.path))?.label || 'PhishGuard'}
+            {navItems.find(i => isActive(i.path))?.label || 'MailBuddy'}
           </span>
           <div className="topbar-actions">
+            <button
+              className="topbar-assistant-btn"
+              onClick={() => setAssistantOpen((o) => !o)}
+              aria-label="Open MailBuddy Assistant"
+              title="MailBuddy Assistant"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+              <span className="topbar-assistant-label">Assistant</span>
+            </button>
             <div className="gmail-status-indicator">
               <span className={`gmail-status-dot ${gmailStatus.connected ? 'connected' : ''}`}></span>
               <span className="gmail-status-text">
@@ -118,6 +132,9 @@ function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
+
+        <AssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
+        <NotificationBridge />
       </div>
     </div>
   )

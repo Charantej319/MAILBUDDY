@@ -47,3 +47,29 @@ def _ai_env(**values):
         for key, val in values.items():
             monkeypatch.setenv(key, val)
     return _apply
+
+
+@pytest.fixture
+def db_session():
+    """Real database session for MailBuddy tests, with cleanup of test rows.
+
+    Test rows are identified by the 'mb-' email_id/id prefix convention so
+    real user data is never touched.
+    """
+    from backend.app.database.connection import SessionLocal, init_db
+    from backend.app.models.email import EmailAnalysis, NotificationLog, AppSetting
+    from sqlalchemy import text as _text
+
+    init_db()
+    db = SessionLocal()
+    yield db
+    try:
+        db.rollback()
+        db.query(EmailAnalysis).filter(
+            (EmailAnalysis.email_id.like("mb-%")) | (EmailAnalysis.id.like("mb-%"))
+        ).delete(synchronize_session=False)
+        db.query(NotificationLog).filter(NotificationLog.email_id.like("mb-%")).delete(synchronize_session=False)
+        db.query(AppSetting).filter(AppSetting.key == "assistant_enabled").delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
