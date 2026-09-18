@@ -1,0 +1,27 @@
+Content-Type: multipart/alternative;
+ boundary="===============2442226335090029179=="
+MIME-Version: 1.0
+From: Ops On-Call <ops-oncall@company.com>
+To: engineering@company.com
+Subject: =?utf-8?q?URGENT=3A_Production_incident_=E2=80=94_checkout_service_?=
+ =?utf-8?q?degraded?=
+Date: Thu, 17 Sep 2026 13:55:32 +0530
+Message-ID: <178963353249.13796.725442713009604109.company.com@NOBITA>
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============2442226335090029179==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Team,
+
+We are investigating a SEV-1 incident: the checkout service is returning 500s for ~30% of requests.
+
+War room: https://meet.company.com/incident-4712
+Status page will be updated every 15 minutes.
+
+On-call lead,
+Ops
+
+--===============2442226335090029179==--

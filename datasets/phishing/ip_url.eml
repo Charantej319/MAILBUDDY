@@ -1,0 +1,27 @@
+Content-Type: multipart/alternative;
+ boundary="===============2897803514653016069=="
+MIME-Version: 1.0
+From: Webmail Support <support@webmail-verify-team.com>
+To: user@example.com
+Subject: Validate your webmail account now
+Date: Thu, 17 Sep 2026 13:55:44 +0530
+Message-ID: 
+ <178963354416.13796.12778223798008212020.webmail-verify-team.com@NOBITA>
+Authentication-Results: mx.google.com; spf=none; dkim=none; dmarc=none
+
+--===============2897803514653016069==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Dear Email User,
+
+Your webmail account will be deactivated within 48 hours. Validate immediately to keep your account active:
+
+http://203.0.113.55/validate/login.aspx
+
+Enter your username and password to confirm your identity.
+
+Webmail Support Team
+
+--===============2897803514653016069==--

@@ -1,0 +1,29 @@
+filename,category,label,sender_domain,subject
+legitimate/meeting_email.eml,legitimate,0,acmecorp.com,Q4 Budget Review Meeting - Thursday 3PM
+legitimate/newsletter.eml,legitimate,0,techcrunch.com,TechCrunch Daily: Latest Tech News
+legitimate/support_reply.eml,legitimate,0,github.com,Re: [Ticket #12345] Password Reset Request
+legitimate/receipt.eml,legitimate,0,amazon.com,Your Amazon.com order has shipped!
+legitimate/meeting_invite.eml,legitimate,0,company.com,Re: Sprint Planning - Tomorrow 10 AM
+legitimate/with_url.eml,legitimate,0,contoso.dev,Notes from today's design review
+legitimate/security_alert.eml,legitimate,0,github.com,[GitHub] A new sign-in to your account
+legitimate/urgent_internal.eml,legitimate,0,company.com,URGENT: Production incident — checkout service degraded
+legitimate/benign_replyto_mismatch.eml,legitimate,0,python.org,Question about asyncio task groups
+legitimate/html_multipart.eml,legitimate,0,coursera.org,Your weekly learning streak
+legitimate/recruiter.eml,legitimate,0,acme-talent-pool.io,Senior Python role — are you open to a chat?
+phishing/bank_phishing.eml,phishing,1,secure-banking-alert.com,URGENT: Your Account Has Been Compromised
+phishing/microsoft_credential_phishing.eml,phishing,1,micr0soft-365.com,Action Required: Verify Your Microsoft 365 Account
+phishing/fake_delivery.eml,phishing,1,dhl-delivery-update.com,Your Package Is Waiting - Action Required
+phishing/netflix_phishing.eml,phishing,1,update-netflix-account.com,Your Netflix Subscription Will Be Cancelled
+phishing/ceo_wire_transfer.eml,phishing,1,company-intl.com,Confidential: Wire Transfer Needed Urgently
+phishing/suspicious_attachment.eml,phishing,1,invoice-system.xyz,Invoice #INV-2024-891 - Payment Overdue
+phishing/google_credential_phishing.eml,phishing,1,google-security-check.com,Security Alert: Unusual sign-in activity detected
+phishing/apple_password_reset_phishing.eml,phishing,1,apple-id-verification.com,Your Apple ID has been locked
+phishing/shortened_url.eml,phishing,1,corp-portal-notify.com,Your mailbox quota has been exceeded
+phishing/punycode_domain.eml,phishing,1,xn--pypal-4ve.com,Unusual activity: confirm your information
+phishing/ip_url.eml,phishing,1,webmail-verify-team.com,Validate your webmail account now
+phishing/html_multipart.eml,phishing,1,o365-mail-security.com,Action required: 5 pending messages held in quarantine
+phishing/invoice_lookalike.eml,phishing,1,company-accounting.com,Overdue invoice — bank details updated
+phishing/suspicious_reply_to.eml,phishing,1,company.com,Password Expiration Notice - Update Required
+phishing/compromised_legitimate.eml,phishing,1,legitimate-company.com,Shared document: Q4 Financial Summary
+spam/lottery_spam.eml,spam,1,best-price-online.com,"CONGRATULATIONS! You Won $1,000,000!"
+spam/inheritance_spam.eml,spam,1,barrister-legal.com,URGENT: Unclaimed Inheritance Fund - $4.5 Million

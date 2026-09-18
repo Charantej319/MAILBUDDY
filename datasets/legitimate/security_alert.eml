@@ -1,0 +1,27 @@
+Content-Type: multipart/alternative;
+ boundary="===============7027855232404601616=="
+MIME-Version: 1.0
+From: GitHub <notifications@github.com>
+To: developer@example.com
+Subject: [GitHub] A new sign-in to your account
+Date: Thu, 17 Sep 2026 13:55:31 +0530
+Message-ID: <178963353165.13796.5847273236093767146.github.com@NOBITA>
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============7027855232404601616==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hi,
+
+We noticed a new sign-in to your account from a Windows device in Bengaluru, India.
+
+If this was you, you can safely ignore this email. If not, please review your recent activity and secure your account:
+
+https://github.com/settings/security
+
+Thanks,
+The GitHub Team
+
+--===============7027855232404601616==--

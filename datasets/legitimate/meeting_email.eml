@@ -1,0 +1,28 @@
+Content-Type: multipart/alternative;
+ boundary="===============4725245715649470300=="
+MIME-Version: 1.0
+From: John Smith <john.smith@acmecorp.com>
+To: employee@company.com
+Subject: Q4 Budget Review Meeting - Thursday 3PM
+Date: Thu, 17 Sep 2026 13:55:26 +0530
+Message-ID: <178963352620.13796.13386225199667451097.acmecorp.com@NOBITA>
+Reply-To: john.smith@acmecorp.com
+Return-Path: <john.smith@acmecorp.com>
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============4725245715649470300==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hi Team,
+
+I wanted to remind everyone about our Q4 budget review meeting scheduled for this Thursday at 3 PM in Conference Room B.
+
+Please bring your department budget summaries. If you can't attend, please send your report to me beforehand.
+
+Thanks,
+John Smith
+Finance Director, Acme Corp
+
+--===============4725245715649470300==--

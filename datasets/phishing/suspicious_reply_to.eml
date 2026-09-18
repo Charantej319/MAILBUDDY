@@ -1,0 +1,28 @@
+Content-Type: multipart/alternative;
+ boundary="===============6731804601894652979=="
+MIME-Version: 1.0
+From: IT Department <it@company.com>
+To: employee@company.com
+Subject: Password Expiration Notice - Update Required
+Date: Thu, 17 Sep 2026 13:55:46 +0530
+Message-ID: <178963354666.13796.13181316133003091137.company.com@NOBITA>
+Reply-To: it-support@external-helpdesk.com
+Return-Path: <it@company.com>
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============6731804601894652979==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Dear Employee,
+
+Your network password will expire in 3 days. Please update it using the link below:
+
+https://password-update.company.com/change?user=employee
+
+If you have questions, reply to this email and our support team will assist you.
+
+IT Department
+
+--===============6731804601894652979==--

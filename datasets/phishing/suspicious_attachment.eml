@@ -1,0 +1,36 @@
+Content-Type: multipart/mixed; boundary="===============9207380348168785179=="
+MIME-Version: 1.0
+From: Invoice System <billing@invoice-system.xyz>
+To: accounts@company.com
+Subject: Invoice #INV-2024-891 - Payment Overdue
+Date: Thu, 17 Sep 2026 13:55:39 +0530
+Message-ID: <178963353995.13796.6513838703449522646.invoice-system.xyz@NOBITA>
+Authentication-Results: mx.google.com; spf=fail; dkim=none; dmarc=none
+
+--===============9207380348168785179==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Please find attached your overdue invoice.
+
+Payment is due immediately to avoid service disruption.
+
+Invoice Amount: $2,340.00
+Due Date: URGENT
+
+Please review the attached document and process payment within 24 hours.
+
+Attached: invoice.pdf.exe
+
+Billing Department
+
+--===============9207380348168785179==
+Content-Type: application/octet-stream
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="invoice.pdf.exe"
+
+ZmFrZSBleGVjdXRhYmxlIGNvbnRlbnQ=
+
+--===============9207380348168785179==--

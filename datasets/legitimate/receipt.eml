@@ -1,0 +1,32 @@
+Content-Type: multipart/alternative;
+ boundary="===============1001327604786963904=="
+MIME-Version: 1.0
+From: Amazon.com <shipment-tracking@amazon.com>
+To: buyer@example.com
+Subject: Your Amazon.com order has shipped!
+Date: Thu, 17 Sep 2026 13:55:29 +0530
+Message-ID: <178963352917.13796.5872366813023212531.amazon.com@NOBITA>
+Reply-To: ship-confirm@amazon.com
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============1001327604786963904==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hello,
+
+Your order #112-3456789-1234567 has shipped!
+
+Estimated delivery: Friday, January 15
+
+Track your package: https://amazon.com/track/11234567891234567
+
+Items in this shipment:
+- Wireless Mouse (x1) - $29.99
+
+Thank you for shopping with us.
+
+Amazon.com
+
+--===============1001327604786963904==--

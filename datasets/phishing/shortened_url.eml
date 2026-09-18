@@ -1,0 +1,25 @@
+Content-Type: multipart/alternative;
+ boundary="===============1435764446556290939=="
+MIME-Version: 1.0
+From: Admin <admin@corp-portal-notify.com>
+To: employee@company.com
+Subject: Your mailbox quota has been exceeded
+Date: Thu, 17 Sep 2026 13:55:42 +0530
+Message-ID: 
+ <178963354246.13796.3581022673736872675.corp-portal-notify.com@NOBITA>
+Authentication-Results: mx.google.com; spf=none; dkim=none; dmarc=none
+
+--===============1435764446556290939==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Dear User,
+
+Your mailbox has exceeded its storage limit and outgoing mail is now blocked.
+
+Increase your quota immediately: http://bit.ly/mailbox-quota
+
+System Administrator
+
+--===============1435764446556290939==--

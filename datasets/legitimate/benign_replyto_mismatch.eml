@@ -1,0 +1,26 @@
+Content-Type: multipart/alternative;
+ boundary="===============2083137513013218029=="
+MIME-Version: 1.0
+From: Python-list <python-list-bounces@python.org>
+To: python-list@python.org
+Subject: Question about asyncio task groups
+Date: Thu, 17 Sep 2026 13:55:33 +0530
+Message-ID: <178963353331.13796.17624819392225435315.python.org@NOBITA>
+Reply-To: python-list@python.org
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============2083137513013218029==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hello,
+
+I'm trying to cancel a TaskGroup when one child fails but the others are still useful.
+
+Any pointers appreciated!
+
+Thanks,
+A lurking list member
+
+--===============2083137513013218029==--

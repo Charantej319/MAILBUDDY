@@ -1,0 +1,34 @@
+Content-Type: multipart/alternative;
+ boundary="===============5867692865671280679=="
+MIME-Version: 1.0
+From: Sarah Chen <sarah.chen@company.com>
+To: team@company.com
+Subject: Re: Sprint Planning - Tomorrow 10 AM
+Date: Thu, 17 Sep 2026 13:55:29 +0530
+Message-ID: <178963352999.13796.5902202611646700818.company.com@NOBITA>
+Reply-To: sarah.chen@company.com
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============5867692865671280679==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hi team,
+
+Just a reminder that our sprint planning meeting is tomorrow at 10 AM in the main conference room.
+
+Please come prepared with your task estimates for the upcoming sprint.
+
+Agenda:
+1. Review previous sprint
+2. Backlog grooming
+3. Sprint planning
+4. Task assignments
+
+See you there!
+
+Sarah
+Engineering Manager
+
+--===============5867692865671280679==--

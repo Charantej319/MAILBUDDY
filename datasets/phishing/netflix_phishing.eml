@@ -1,0 +1,35 @@
+Content-Type: multipart/alternative;
+ boundary="===============8494367769045238825=="
+MIME-Version: 1.0
+From: Netflix Support <support@update-netflix-account.com>
+To: user@email.com
+Subject: Your Netflix Subscription Will Be Cancelled
+Date: Thu, 17 Sep 2026 13:55:38 +0530
+Message-ID: 
+ <178963353827.13796.14831812815565953167.update-netflix-account.com@NOBITA>
+Reply-To: billing@update-netflix-account.com
+Authentication-Results: mx.google.com; spf=fail; dkim=fail; dmarc=fail
+
+--===============8494367769045238825==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Dear Netflix Member,
+
+We were unable to process your payment. Your account will be suspended within 24 hours.
+
+To update your payment information, please visit:
+http://netflix-account-update.com/billing?user=member&ref=12345
+
+Please provide:
+- Credit card number
+- Expiration date
+- CVV
+- Billing address
+
+If you do not update within 24 hours, your account will be permanently deleted and you will lose all viewing history.
+
+Netflix Billing Team
+
+--===============8494367769045238825==--

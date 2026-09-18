@@ -1,0 +1,24 @@
+Content-Type: multipart/alternative;
+ boundary="===============6012079652916525893=="
+MIME-Version: 1.0
+From: Accounting <billing@company-accounting.com>
+To: finance@company.com
+Subject: =?utf-8?q?Overdue_invoice_=E2=80=94_bank_details_updated?=
+Date: Thu, 17 Sep 2026 13:55:45 +0530
+Message-ID: 
+ <178963354581.13796.17057418210509043492.company-accounting.com@NOBITA>
+Authentication-Results: mx.google.com; spf=none; dkim=none; dmarc=none
+
+--===============6012079652916525893==
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+RGVhciBGaW5hbmNlIFRlYW0sCgpJbnZvaWNlIElOVi03NzEyMCBpcyBvdmVyZHVlLiBOb3RlIHRo
+YXQgb3VyIGJhbmsgZGV0YWlscyBoYXZlIGNoYW5nZWQg4oCUIHBsZWFzZSByZW1pdCBwYXltZW50
+IHRvIHRoZSBuZXcgYWNjb3VudCBiZWxvdyB3aXRoaW4gMjQgaG91cnMgdG8gYXZvaWQgc2Vydmlj
+ZSBpbnRlcnJ1cHRpb246CgpCYW5rOiBNZXJpZGlhbiBUcnVzdApBY2NvdW50OiA4ODM3NDYyOTEw
+ClJvdXRpbmc6IDAyNjAwOTU5MwoKQW1vdW50IGR1ZTogJDE0LDg5MC4wMAoKQWNjb3VudHMgRGVw
+YXJ0bWVudAo=
+
+--===============6012079652916525893==--

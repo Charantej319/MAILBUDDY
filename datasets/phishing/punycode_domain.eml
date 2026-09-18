@@ -1,0 +1,26 @@
+Content-Type: multipart/alternative;
+ boundary="===============7512230582207088345=="
+MIME-Version: 1.0
+From: PayPal <service@xn--pypal-4ve.com>
+To: user@example.com
+Subject: Unusual activity: confirm your information
+Date: Thu, 17 Sep 2026 13:55:43 +0530
+Message-ID: <178963354332.13796.7398491183194162745.xn--pypal-4ve.com@NOBITA>
+Authentication-Results: mx.google.com; spf=fail; dkim=none; dmarc=fail
+
+--===============7512230582207088345==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Dear Customer,
+
+We detected unusual activity in your account. For your protection, please confirm your information within 24 hours:
+
+https://www.xn--pypal-4ve.com/confirm?session=abc123
+
+We ask you to verify your account details to avoid account limitation.
+
+PayPal
+
+--===============7512230582207088345==--

@@ -1,0 +1,36 @@
+Content-Type: multipart/alternative;
+ boundary="===============7457326470201857913=="
+MIME-Version: 1.0
+From: Office 365 <security@o365-mail-security.com>
+To: employee@company.com
+Subject: Action required: 5 pending messages held in quarantine
+Date: Thu, 17 Sep 2026 13:55:44 +0530
+Message-ID: 
+ <178963354498.13796.11482055382644355994.o365-mail-security.com@NOBITA>
+Authentication-Results: mx.google.com; spf=softfail; dkim=none; dmarc=fail
+
+--===============7457326470201857913==
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+RGVhciBVc2VyLAoKWW91IGhhdmUgNSBtZXNzYWdlcyBoZWxkIGluIHF1YXJhbnRpbmUgYXdhaXRp
+bmcgcmVsZWFzZS4gTWVzc2FnZXMgd2lsbCBiZSBkZWxldGVkIHdpdGhpbiAyNCBob3VycyB1bmxl
+c3MgeW91IHJlbGVhc2UgdGhlbS4KClJlbGVhc2UgbWVzc2FnZXMg4oCUIHNpZ24gaW4gd2l0aCB5
+b3VyIGVtYWlsIHBhc3N3b3JkOgpodHRwczovL28zNjUtbWFpbC1zZWN1cml0eS5jb20vcmVsZWFz
+ZT90b2tlbj05ZjhlN2Q2YwoKVGhhbmsgeW91LApPZmZpY2UgMzY1IFNlY3VyaXR5IFRlYW0K
+
+--===============7457326470201857913==
+Content-Type: text/html; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+CjxwPkRlYXIgVXNlciw8L3A+CjxwPllvdSBoYXZlIDxzdHJvbmc+NSBtZXNz
+YWdlczwvc3Ryb25nPiBoZWxkIGluIHF1YXJhbnRpbmUgYXdhaXRpbmcgcmVsZWFzZS4KTWVzc2Fn
+ZXMgd2lsbCBiZSA8c3Ryb25nPmRlbGV0ZWQgd2l0aGluIDI0IGhvdXJzPC9zdHJvbmc+IHVubGVz
+cyB5b3UgcmVsZWFzZSB0aGVtLjwvcD4KPHA+PGEgaHJlZj0iaHR0cHM6Ly9vMzY1LW1haWwtc2Vj
+dXJpdHkuY29tL3JlbGVhc2U/dG9rZW49OWY4ZTdkNmMiPlJlbGVhc2UgbWVzc2FnZXMg4oCUIHNp
+Z24gaW4gd2l0aCB5b3VyIGVtYWlsIHBhc3N3b3JkPC9hPjwvcD4KPHA+VGhhbmsgeW91LDxicj5P
+ZmZpY2UgMzY1IFNlY3VyaXR5IFRlYW08L3A+CjwvYm9keT48L2h0bWw+
+
+--===============7457326470201857913==--

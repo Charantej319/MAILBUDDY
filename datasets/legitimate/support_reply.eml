@@ -1,0 +1,31 @@
+Content-Type: multipart/alternative;
+ boundary="===============1351971477512958495=="
+MIME-Version: 1.0
+From: GitHub Support <support@github.com>
+To: developer@example.com
+Subject: Re: [Ticket #12345] Password Reset Request
+Date: Thu, 17 Sep 2026 13:55:28 +0530
+Message-ID: <178963352834.13796.3266307338557010823.github.com@NOBITA>
+Reply-To: support@github.com
+Return-Path: <support@github.com>
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============1351971477512958495==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hi,
+
+Thank you for contacting GitHub Support.
+
+We've processed your password reset request. You can reset your password using the link below (valid for 1 hour):
+
+https://github.com/password_reset/abc123def456
+
+If you didn't request this, please ignore this email and consider enabling two-factor authentication.
+
+Best regards,
+GitHub Support Team
+
+--===============1351971477512958495==--

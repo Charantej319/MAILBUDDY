@@ -1,0 +1,37 @@
+Content-Type: multipart/mixed; boundary="===============5151673786677878710=="
+MIME-Version: 1.0
+From: Coursera <no-reply@coursera.org>
+To: learner@example.com
+Subject: Your weekly learning streak
+Date: Thu, 17 Sep 2026 13:55:34 +0530
+Message-ID: <178963353414.13796.3780764618609043728.coursera.org@NOBITA>
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============5151673786677878710==
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+Q29uZ3JhdHVsYXRpb25zIOKAlCB5b3Uga2VwdCB5b3VyIGxlYXJuaW5nIHN0cmVhayBnb2luZyB0
+aGlzIHdlZWshCgpDb250aW51ZSB5b3VyIGNvdXJzZTogaHR0cHM6Ly93d3cuY291cnNlcmEub3Jn
+L2xlYXJuL3B5dGhvbg==
+
+--===============5151673786677878710==
+Content-Type: text/html; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+CjxwPkNvbmdyYXR1bGF0aW9ucyDigJQgeW91IGtlcHQgeW91ciBsZWFybmlu
+ZyBzdHJlYWsgZ29pbmcgdGhpcyB3ZWVrITwvcD4KPHA+Q29udGludWUgeW91ciBjb3Vyc2U6IDxh
+IGhyZWY9Imh0dHBzOi8vd3d3LmNvdXJzZXJhLm9yZy9sZWFybi9weXRob24iPlB5dGhvbiBmb3Ig
+RXZlcnlib2R5PC9hPjwvcD4KPC9ib2R5PjwvaHRtbD4=
+
+--===============5151673786677878710==
+Content-Type: application/pdf
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="certificate.pdf"
+
+JVBERi0xLjQgZmFrZSBjZXJ0aWZpY2F0ZQ==
+
+--===============5151673786677878710==--

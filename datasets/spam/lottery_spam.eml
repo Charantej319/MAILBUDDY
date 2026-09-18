@@ -1,0 +1,32 @@
+Content-Type: multipart/alternative;
+ boundary="===============6516547536918437439=="
+MIME-Version: 1.0
+From: Special Offers <deals@best-price-online.com>
+To: user@email.com
+Subject: CONGRATULATIONS! You Won $1,000,000!
+Date: Thu, 17 Sep 2026 13:55:48 +0530
+Message-ID: 
+ <178963354833.13796.10269396362815751018.best-price-online.com@NOBITA>
+X-Mailer: Bulk Mail Sender v2.0
+Authentication-Results: mx.google.com; spf=fail; dkim=none; dmarc=none
+
+--===============6516547536918437439==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+CONGRATULATIONS!!!
+
+You have been selected as our WINNER of $1,000,000 in our annual lottery!
+
+Claim your prize NOW before it expires TODAY!
+
+Click here: http://click.example.com/claim-prize?winner=you
+
+Act immediately! This offer expires in 24 hours!
+
+Don't delay! Claim your reward NOW!
+
+Best Price Online Team
+
+--===============6516547536918437439==--

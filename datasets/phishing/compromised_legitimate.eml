@@ -1,0 +1,29 @@
+Content-Type: multipart/alternative;
+ boundary="===============8539339627163515772=="
+MIME-Version: 1.0
+From: Shared Files <docs@legitimate-company.com>
+To: user@company.com
+Subject: Shared document: Q4 Financial Summary
+Date: Thu, 17 Sep 2026 13:55:47 +0530
+Message-ID: 
+ <178963354750.13796.11444104565008747053.legitimate-company.com@NOBITA>
+Reply-To: docs@legitimate-company.com
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============8539339627163515772==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hi,
+
+Please review the attached document. It contains the Q4 financial summary you requested.
+
+View document: https://docs.legitimate-company.com/shared/q4-financial-abc123
+
+If you can't view the document, please sign in with your company credentials.
+
+Best regards,
+Shared Documents System
+
+--===============8539339627163515772==--

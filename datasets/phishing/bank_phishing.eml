@@ -1,0 +1,39 @@
+Content-Type: multipart/alternative;
+ boundary="===============0579063306283759754=="
+MIME-Version: 1.0
+From: Security Alert <security@secure-banking-alert.com>
+To: user@gmail.com
+Subject: URGENT: Your Account Has Been Compromised
+Date: Thu, 17 Sep 2026 13:55:35 +0530
+Message-ID: 
+ <178963353579.13796.15053315904627219743.secure-banking-alert.com@NOBITA>
+Reply-To: support@secure-banking-alert.com
+Return-Path: <bounce@secure-banking-alert.com>
+Authentication-Results: mx.google.com; spf=fail; dkim=fail; dmarc=fail
+
+--===============0579063306283759754==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Dear Valued Customer,
+
+We have detected UNUSUAL ACTIVITY on your bank account. Your account has been temporarily SUSPENDED due to unauthorized access attempts.
+
+You must ACT NOW to restore access to your account. If you do not respond within 24 hours, your account will be PERMANENTLY CLOSED.
+
+Please click the link below to verify your identity and restore your account:
+
+http://192.168.1.100/secure-banking/verify?token=abc123&session=xyz789
+
+You will need to provide:
+- Your account number
+- Your online banking password
+- Your PIN code
+- Your social security number
+
+This is for your protection. Do not ignore this warning.
+
+Bank Security Team
+
+--===============0579063306283759754==--

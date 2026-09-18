@@ -1,0 +1,29 @@
+Content-Type: multipart/alternative;
+ boundary="===============6425167481344644636=="
+MIME-Version: 1.0
+From: TechCrunch <newsletter@techcrunch.com>
+To: subscriber@example.com
+Subject: TechCrunch Daily: Latest Tech News
+Date: Thu, 17 Sep 2026 13:55:27 +0530
+Message-ID: <178963352750.13796.13256263567037428644.techcrunch.com@NOBITA>
+List-Unsubscribe: <https://techcrunch.com/unsubscribe>
+Precedence: bulk
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============6425167481344644636==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+TechCrunch Daily Digest
+
+Top Stories:
+1. AI Startup Raises $100M Series B
+2. New iPhone Features Leaked
+3. Cloud Computing Trends for 2024
+
+Read more at techcrunch.com
+
+To unsubscribe: https://techcrunch.com/unsubscribe
+
+--===============6425167481344644636==--

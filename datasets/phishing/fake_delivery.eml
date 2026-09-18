@@ -1,0 +1,35 @@
+Content-Type: multipart/alternative;
+ boundary="===============6334972717505412264=="
+MIME-Version: 1.0
+From: DHL Express <tracking@dhl-delivery-update.com>
+To: recipient@example.com
+Subject: Your Package Is Waiting - Action Required
+Date: Thu, 17 Sep 2026 13:55:37 +0530
+Message-ID: 
+ <178963353744.13796.16550556383556217196.dhl-delivery-update.com@NOBITA>
+Reply-To: customercare@dhl-delivery-update.com
+Authentication-Results: mx.google.com; spf=fail; dkim=none; dmarc=none
+
+--===============6334972717505412264==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Dear Customer,
+
+Your package could not be delivered. You must confirm your delivery address within 24 hours or the package will be returned to sender.
+
+Track your package: http://192.0.2.100/tracking?id=DHL987654
+
+To reschedule delivery, please provide:
+- Full name
+- Home address
+- Phone number
+- Credit card for shipping verification: $2.99 re-delivery fee
+
+Click below to update your information:
+http://bit.ly/dhl-reschedule
+
+DHL Customer Service
+
+--===============6334972717505412264==--

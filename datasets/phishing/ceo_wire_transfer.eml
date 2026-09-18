@@ -1,0 +1,32 @@
+Content-Type: multipart/alternative;
+ boundary="===============3988819018578997158=="
+MIME-Version: 1.0
+From: CEO Office <ceo-office@company-intl.com>
+To: finance@company.com
+Subject: Confidential: Wire Transfer Needed Urgently
+Date: Thu, 17 Sep 2026 13:55:39 +0530
+Message-ID: <178963353911.13796.2254233462974860505.company-intl.com@NOBITA>
+Reply-To: ceo-office@company-intl.com
+Authentication-Results: mx.google.com; spf=fail; dkim=fail; dmarc=fail
+
+--===============3988819018578997158==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hi,
+
+I need you to process an urgent wire transfer for a confidential acquisition. Please do NOT discuss this with anyone.
+
+Transfer $45,000 to:
+Account: 1234567890
+Bank: First National
+Routing: 021000021
+
+This is time-sensitive. Please send the funds within 2 hours.
+
+I'm in a meeting and can't take calls. Just handle this directly.
+
+CEO
+
+--===============3988819018578997158==--

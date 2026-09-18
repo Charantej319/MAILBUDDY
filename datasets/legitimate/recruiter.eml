@@ -1,0 +1,25 @@
+Content-Type: multipart/alternative;
+ boundary="===============3778907635870056081=="
+MIME-Version: 1.0
+From: Talent Team <hello@acme-talent-pool.io>
+To: candidate@example.com
+Subject: =?utf-8?q?Senior_Python_role_=E2=80=94_are_you_open_to_a_chat=3F?=
+Date: Thu, 17 Sep 2026 13:55:34 +0530
+Message-ID: <178963353496.13796.502451024930802542.acme-talent-pool.io@NOBITA>
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============3778907635870056081==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hi,
+
+I came across your profile and think you could be a strong fit for a Senior Python Engineer role at one of our partner companies (remote, India-based team).
+
+If you're open to it, just reply with a convenient time for a short call. No preparation needed.
+
+Best regards,
+Talent Team
+
+--===============3778907635870056081==--

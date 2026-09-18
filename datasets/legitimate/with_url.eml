@@ -1,0 +1,26 @@
+Content-Type: multipart/alternative;
+ boundary="===============9008719656246845028=="
+MIME-Version: 1.0
+From: Priya Sharma <priya@contoso.dev>
+To: teammate@contoso.dev
+Subject: Notes from today's design review
+Date: Thu, 17 Sep 2026 13:55:30 +0530
+Message-ID: <178963353082.13796.3519077172456415995.contoso.dev@NOBITA>
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+
+--===============9008719656246845028==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hi Sam,
+
+Great discussion today. I've posted the notes and the Figma boards here:
+
+https://wiki.contoso.dev/design-review/2026-09-15
+
+Let me know if you have any comments before Friday.
+
+Priya
+
+--===============9008719656246845028==--
