@@ -7,6 +7,7 @@ import json
 import uuid
 import asyncio
 import logging
+from datetime import timezone
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -40,9 +41,10 @@ def _parse_date(date_str: str):
         dt = parse_iso(date_str)
         if dt is None:
             return utc_now()
-    if dt.tzinfo is None:
-        from datetime import timezone
-        dt = dt.replace(tzinfo=timezone.utc)
+    # NOTE: timezone must be a function-global import. A function-local import
+    # here would make 'timezone' local to the entire function, so the final
+    # astimezone(timezone.utc) would raise UnboundLocalError whenever the
+    # parsed header was already timezone-aware (the common Gmail case).
     return dt.astimezone(timezone.utc)
 
 
@@ -218,7 +220,9 @@ async def sync_gmail(
 
             except Exception as e:
                 # Log the failure server-side but continue processing other emails.
-                logger.warning("Failed to process Gmail message %s: %s", message_id[:12], type(e).__name__)
+                # Include str(e): for UnboundLocalError/KeyError the message names the
+                # culprit symbol; email content/tokens never appear in these messages.
+                logger.warning("Failed to process Gmail message %s: %s: %s", message_id[:12], type(e).__name__, e)
                 skipped += 1
                 continue
 

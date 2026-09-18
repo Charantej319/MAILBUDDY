@@ -17,6 +17,7 @@ const OAUTH_ERROR_MESSAGES = {
   network_error: 'Network error while contacting Google. Check your connection and try again.',
   gmail_api_disabled: 'The Gmail API is not enabled for this Google Cloud project.',
   profile_failed: 'Could not read your Gmail profile after sign-in.',
+  oauth_not_configured: 'Gmail sign-in is not configured on this installation. Add your Google OAuth client credentials to the runtime configuration.',
 };
 const GENERIC_OAUTH_ERROR = 'Gmail authorization failed. Please try again.';
 

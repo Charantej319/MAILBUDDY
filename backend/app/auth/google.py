@@ -4,6 +4,7 @@ Tokens stored server-side in SQLite. Frontend never sees tokens.
 """
 
 import logging
+import os
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -25,29 +26,62 @@ GMAIL_API_BASE = "https://www.googleapis.com/gmail/v1/users/me"
 
 
 def _frontend_url(path: str, params: dict | None = None) -> str:
-    """Build a frontend URL (e.g. http://localhost:5173/settings?connected=true)."""
+    """Build a URL on the configured FRONTEND_URL (used for email/notification links)."""
     url = f"{settings.FRONTEND_URL}{path}"
     if params:
         url = f"{url}?{urlencode(params)}"
     return url
 
 
-def _log_and_redirect(error_code: str, detail: str):
-    """Log a callback failure (safe fields only) and redirect to the frontend."""
+def _callback_origin(request: Request) -> str:
+    """Same-origin base URL the OAuth flow was started from (e.g. http://localhost:8000).
+
+    The flow always starts via a relative URL ('/auth/google') from the app
+    origin, so the browser's Host header on the callback is that origin —
+    regardless of whether it is the packaged desktop app (FastAPI-served SPA on
+    localhost:8000) or Vite dev (proxied through localhost:5173). Deriving it
+    from the request keeps the post-auth redirect same-origin in BOTH
+    environments and never sends the desktop app to the nonexistent Vite dev
+    server (:5173), which previously left a blank page after approval.
+    """
+    host = request.headers.get("host", "localhost:8000")
+    scheme = request.headers.get("x-forwarded-proto", "http").split(",")[0].strip()
+    return f"{scheme}://{host}"
+
+
+def _post_auth_redirect(request: Request, params: dict | None = None) -> str:
+    """Redirect target after OAuth (success or failure).
+
+    Desktop/packaged mode (PHISHGUARD_DATA_DIR set by the Electron shell): the
+    SPA is served by this same FastAPI origin, so redirect back to the Host the
+    flow actually started on — never to the configured FRONTEND_URL (e.g. the
+    Vite dev server :5173), which does not exist in the packaged app and left a
+    blank page after Google approval.
+    Dev mode (PHISHGUARD_DATA_DIR unset): unchanged — FRONTEND_URL (:5173).
+    """
+    if os.environ.get("PHISHGUARD_DATA_DIR"):
+        url = f"{_callback_origin(request)}/settings"
+    else:
+        url = _frontend_url("/settings")
+    if params:
+        url = f"{url}?{urlencode(params)}"
+    return url
+
+
+def _log_and_redirect(request: Request, error_code: str, detail: str):
+    """Log a callback failure (safe fields only) and redirect to the app's own frontend."""
     # NEVER log access/refresh tokens, client secrets, authorization codes or cookies.
     logger.error("Gmail OAuth callback failed: %s (%s)", error_code, detail)
-    return RedirectResponse(url=_frontend_url("/settings", {"error": error_code}))
+    return RedirectResponse(url=_post_auth_redirect(request, {"error": error_code}))
 
 
 @router.get("/google")
-async def google_login():
+async def google_login(request: Request):
     """Redirect user to Google OAuth consent screen."""
     if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
         logger.error("Gmail OAuth attempted but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are not set")
-        raise HTTPException(
-            status_code=503,
-            detail="Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in backend/.env"
-        )
+        # Redirect to the app's own error state instead of returning raw JSON.
+        return RedirectResponse(url=_post_auth_redirect(request, {"error": "oauth_not_configured"}))
 
     state = create_oauth_state()
 
@@ -77,18 +111,18 @@ async def google_callback(
     """Handle Google OAuth callback. Store tokens server-side."""
     # 1. User cancelled / denied consent at the Google screen.
     if error:
-        return _log_and_redirect(error, "Google returned an OAuth error")
+        return _log_and_redirect(request, error, "Google returned an OAuth error")
 
     if not code:
-        return _log_and_redirect("missing_code", "No authorization code received")
+        return _log_and_redirect(request, "missing_code", "No authorization code received")
 
     # 2. CSRF state validation (single use, 10 minute TTL).
     if not consume_oauth_state(state):
-        return _log_and_redirect("invalid_state", "Missing, expired or already-used state parameter")
+        return _log_and_redirect(request, "invalid_state", "Missing, expired or already-used state parameter")
 
     if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
         logger.error("Gmail OAuth callback but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are not set")
-        raise HTTPException(status_code=503, detail="Google OAuth not configured")
+        return RedirectResponse(url=_post_auth_redirect(request, {"error": "oauth_not_configured"}))
 
     # 3. Exchange authorization code for tokens.
     token_data = {
@@ -104,13 +138,13 @@ async def google_callback(
             token_response = await client.post(GOOGLE_TOKEN_URL, data=token_data)
     except httpx.RequestError as exc:
         logger.error("Gmail OAuth: token exchange network failure: %s", type(exc).__name__)
-        return _log_and_redirect("network_error", "Could not reach Google token endpoint")
+        return _log_and_redirect(request, "network_error", "Could not reach Google token endpoint")
 
     if token_response.status_code != 200:
         # Log only the OAuth error code, never the response body (contains secrets).
         token_error = token_response.json().get("error", "unknown") if token_response.headers.get("content-type", "").startswith("application/json") else "non_json_response"
         logger.error("Gmail OAuth: token exchange failed with HTTP %s (%s)", token_response.status_code, token_error)
-        return _log_and_redirect("token_exchange_failed", f"Google rejected the authorization code (HTTP {token_response.status_code})")
+        return _log_and_redirect(request, "token_exchange_failed", f"Google rejected the authorization code (HTTP {token_response.status_code})")
 
     tokens = token_response.json()
 
@@ -119,7 +153,7 @@ async def google_callback(
     expires_in = tokens.get("expires_in", 3600)
 
     if not access_token:
-        return _log_and_redirect("token_exchange_failed", "No access token in Google response")
+        return _log_and_redirect(request, "token_exchange_failed", "No access token in Google response")
 
     # 4. Identify the account via the Gmail profile endpoint.
     try:
@@ -130,20 +164,20 @@ async def google_callback(
             )
     except httpx.RequestError as exc:
         logger.error("Gmail OAuth: profile fetch network failure: %s", type(exc).__name__)
-        return _log_and_redirect("network_error", "Could not reach Gmail API")
+        return _log_and_redirect(request, "network_error", "Could not reach Gmail API")
 
     if profile_response.status_code == 403:
         # Most common cause: Gmail API not enabled on the Google Cloud project.
         logger.error("Gmail OAuth: Gmail API returned 403 for profile (is the Gmail API enabled on the Google Cloud project?)")
-        return _log_and_redirect("gmail_api_disabled", "Gmail API is not enabled for this Google Cloud project (HTTP 403)")
+        return _log_and_redirect(request, "gmail_api_disabled", "Gmail API is not enabled for this Google Cloud project (HTTP 403)")
 
     if profile_response.status_code != 200:
         logger.error("Gmail OAuth: Gmail profile fetch failed with HTTP %s", profile_response.status_code)
-        return _log_and_redirect("profile_failed", f"Gmail profile lookup failed (HTTP {profile_response.status_code})")
+        return _log_and_redirect(request, "profile_failed", f"Gmail profile lookup failed (HTTP {profile_response.status_code})")
 
     user_email = profile_response.json().get("emailAddress")
     if not user_email:
-        return _log_and_redirect("profile_failed", "Gmail profile did not include an email address")
+        return _log_and_redirect(request, "profile_failed", "Gmail profile did not include an email address")
 
     # 5. Store tokens server-side (never sent to the frontend).
     db = SessionLocal()
@@ -170,8 +204,9 @@ async def google_callback(
     # 6. Create session (stored in DB, survives server restarts/reloads).
     session_id = create_session(user_email)
 
-    # 7. Redirect back to the frontend with the session cookie.
-    response = RedirectResponse(url=_frontend_url("/settings", {"connected": "true"}))
+    # 7. Redirect back to the app the flow started from (same-origin in dev
+    #    and desktop) with the session cookie.
+    response = RedirectResponse(url=_post_auth_redirect(request, {"connected": "true"}))
     response.set_cookie(
         key="phishguard_session",
         value=session_id,

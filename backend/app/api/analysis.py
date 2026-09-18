@@ -30,7 +30,9 @@ def _parse_date(date_str: str):
             return utc_now()
     if dt.tzinfo is None:
         # Date headers without an explicit zone are ambiguous; assume UTC.
-        from datetime import timezone
+        # (timezone is imported at module level — a function-local import here
+        # would make 'timezone' local to the whole function and raise
+        # UnboundLocalError for already-aware datetimes.)
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 

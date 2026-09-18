@@ -48,7 +48,7 @@ Pop-Location
 if ($Code -ne 0) { throw "electron-builder failed with exit code $Code" }
 
 # 5. Verify artifact
-$Installer = Get-ChildItem "$Root/desktop/dist" -Filter "PhishGuard-Setup-*.exe" -ErrorAction SilentlyContinue |
+$Installer = Get-ChildItem "$Root/desktop/dist" -Filter "MailBuddy-Setup-*.exe" -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $Installer) { throw "installer artifact not found in desktop/dist" }
 Write-Host "== Installer built: $($Installer.FullName) ($([math]::Round($Installer.Length/1MB,1)) MB) ==" -ForegroundColor Green
