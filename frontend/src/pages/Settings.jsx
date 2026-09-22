@@ -13,10 +13,25 @@ function Settings({ gmailStatus, setGmailStatus }) {
   const verifiedRef = useRef(false)
   const [mbSettings, setMbSettings] = useState(null)
   const [mbSaving, setMbSaving] = useState(false)
+  const [aiConfigured, setAiConfigured] = useState(null)
+  const [chatCleared, setChatCleared] = useState(false)
 
   useEffect(() => {
-    api.getMailBuddySettings().then((d) => setMbSettings(d.settings)).catch(() => setMbSettings(null))
+    api.getMailBuddySettings()
+      .then((d) => {
+        setMbSettings(d.settings)
+        setAiConfigured(!!d.ai_priority_configured)
+      })
+      .catch(() => setMbSettings(null))
   }, [])
+
+  const handleClearChat = async () => {
+    try {
+      await api.clearAssistantChat()
+      setChatCleared(true)
+      setTimeout(() => setChatCleared(false), 2500)
+    } catch { /* best-effort */ }
+  }
 
   const toggleMbSetting = async (key) => {
     if (mbSaving || !mbSettings) return
@@ -182,8 +197,33 @@ function Settings({ gmailStatus, setGmailStatus }) {
           <div className="settings-section-desc">Assistant, smart priority and notifications. Disabling AI never disables the security engine.</div>
         </div>
         <div className="settings-section-body">
+          <div className="mb-assistant-status-row">
+            <div className="app-info-item">
+              <span className="app-info-label">Assistant</span>
+              <span className="app-info-value">{mbSettings?.assistant_enabled ? 'Enabled' : 'Disabled'}</span>
+            </div>
+            <div className="app-info-item">
+              <span className="app-info-label">AI assistance</span>
+              <span className={`app-info-value ${aiConfigured ? '' : 'text-muted'}`}>
+                {aiConfigured === null ? 'Checking…' : aiConfigured ? 'Active' : 'Offline (answers use MailBuddy data only)'}
+              </span>
+            </div>
+            <div className="app-info-item">
+              <span className="app-info-label">Chat</span>
+              <span className="app-info-value">
+                <button className="btn btn-ghost btn-sm" onClick={handleClearChat}>Clear current chat</button>
+                {chatCleared && <span style={{ marginLeft: 8, fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>Cleared</span>}
+              </span>
+            </div>
+          </div>
+          <div className="settings-note" style={{ marginTop: 'var(--space-3)' }}>
+            The assistant is read-only: it explains and summarizes the emails MailBuddy has already analyzed.
+            When you ask about a specific email, only that email's stored analysis is used. Chat history is kept
+            in memory for the current session only and is never used to train AI models. Provider details are an
+            implementation detail — MailBuddy works fully without it.
+          </div>
           {mbSettings ? (
-            <div className="mb-settings-grid">
+            <div className="mb-settings-grid" style={{ marginTop: 'var(--space-3)' }}>
               {[
                 { key: 'assistant_enabled', label: 'AI Assistant', desc: 'Read-only inbox assistant in the top bar' },
                 { key: 'smart_priority_enabled', label: 'Smart Priority', desc: 'AI-assisted importance classification' },

@@ -231,13 +231,25 @@ class ApiService {
     return response.json();
   }
 
-  async askMailBuddy(question) {
+  async askMailBuddy(question, emailId = null) {
     const response = await fetch(`${API_BASE}/mailbuddy/assistant/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, email_id: emailId }),
     });
-    if (!response.ok) throw new Error('Assistant request failed');
+    if (!response.ok) {
+      const err = new Error('Assistant request failed');
+      err.status = response.status;
+      throw err;
+    }
+    return response.json();
+  }
+
+  async clearAssistantChat() {
+    const response = await fetch(`${API_BASE}/mailbuddy/assistant/clear`, {
+      method: 'POST',
+    });
+    if (!response.ok) throw new Error('Failed to clear chat');
     return response.json();
   }
 

@@ -17,7 +17,7 @@ import { DetailErrorBoundary } from '../components/ErrorBoundary'
  * - The page is additionally protected by a strict CSP (index.html).
  */
 
-function EmailAnalysis() {
+function EmailAnalysis({ onAskAssistant }) {
   const { id } = useParams()
   const [analysis, setAnalysis] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -156,6 +156,11 @@ function EmailAnalysis() {
   const aiDisagreement = ai.status === 'DISAGREEMENT'
   const aiPending = !ai.status || ai.status === 'NOT_REQUESTED'
 
+  const canAsk = typeof onAskAssistant === 'function'
+  const askAbout = (question) => {
+    if (canAsk) onAskAssistant({ id: analysis.id, subject: analysis.subject }, question)
+  }
+
   return (
     <div className="threat-analysis-page">
       {/* Breadcrumb */}
@@ -211,6 +216,14 @@ function EmailAnalysis() {
           <h1 className="threat-subject">{analysis.subject || '(no subject)'}</h1>
         </div>
         <div className="threat-header-right">
+          {canAsk && (
+            <div className="ask-mailbuddy-btn-wrap">
+              <button className="btn btn-secondary btn-sm" onClick={() => askAbout()} disabled={!canAsk}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 6 }}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                Ask MailBuddy about this email
+              </button>
+            </div>
+          )}
           <div className="threat-score-large">
             <div className="threat-score-number" style={{ color: scoreColor }}>
               {analysis.risk_score.toFixed(0)}
@@ -803,10 +816,10 @@ function stripHtmlToText(html) {
     .trim()
 }
 
-export default function EmailAnalysisWithBoundary() {
+export default function EmailAnalysisWithBoundary(props) {
   return (
     <DetailErrorBoundary contextName="email investigation">
-      <EmailAnalysis />
+      <EmailAnalysis {...props} />
     </DetailErrorBoundary>
   )
 }

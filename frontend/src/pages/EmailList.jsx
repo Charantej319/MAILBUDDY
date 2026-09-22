@@ -2,7 +2,22 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import { formatDateTime } from '../utils/time'
-import { PRIORITY_LEVELS, PRIORITY_CATEGORIES, priorityStyle, categoryLabel } from '../utils/priority'
+import { PRIORITY_LEVELS, PRIORITY_CATEGORIES, priorityStyle, categoryLabel, securityStyle } from '../utils/priority'
+
+/** Sender cell: neutral text + a small colored priority dot (information, not decoration). */
+function SenderCell({ email }) {
+  const level = email.priority?.level
+  const dotCls = level === 'CRITICAL' ? 'prio-dot-critical'
+    : level === 'HIGH' ? 'prio-dot-high'
+    : (level === 'NORMAL' || level === 'IMPORTANT') ? 'prio-dot-normal'
+    : level === 'LOW' ? 'prio-dot-low' : null
+  return (
+    <span className="mb-sender-cell">
+      {dotCls && <span className={`prio-dot ${dotCls}`} aria-hidden="true"></span>}
+      <span>{email.sender_email || email.sender}</span>
+    </span>
+  )
+}
 
 function EmailList({ gmailStatus }) {
   const [emails, setEmails] = useState([])
@@ -310,7 +325,7 @@ function EmailList({ gmailStatus }) {
                       </div>
                     </td>
                     <td className="cell-ellipsis">
-                      {email.sender_email || email.sender}
+                      <SenderCell email={email} />
                     </td>
                     <td className="cell-ellipsis cell-secondary">
                       {email.subject || '(no subject)'}

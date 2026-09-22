@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
 import { formatRelativeTime } from '../utils/time'
-import { PRIORITY_LEVELS, priorityStyle, categoryLabel, formatDeadline } from '../utils/priority'
+import { LEVEL_META, priorityStyle, categoryLabel, formatDeadline } from '../utils/priority'
 import { MailBuddyLogo } from '../components/MailBuddyBrand'
 
 function Dashboard({ gmailStatus }) {
@@ -10,7 +10,6 @@ function Dashboard({ gmailStatus }) {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [activeLevel, setActiveLevel] = useState(null)
-  const [levelEmails, setLevelEmails] = useState(null)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -36,20 +35,7 @@ function Dashboard({ gmailStatus }) {
     }
   }
 
-  const showLevel = async (level) => {
-    if (level === null) {
-      setActiveLevel(null)
-      setLevelEmails(null)
-      return
-    }
-    setActiveLevel(level)
-    try {
-      const data = await api.getPriorityEmails(level)
-      setLevelEmails(data.emails || [])
-    } catch {
-      setLevelEmails([])
-    }
-  }
+
 
   const attention = summary?.attention || []
   const counts = summary?.counts || {}
@@ -115,54 +101,33 @@ function Dashboard({ gmailStatus }) {
         )}
       </div>
 
-      {/* Priority level filter strip */}
-      <div className="mb-priority-strip" role="tablist" aria-label="Filter by priority">
-        {PRIORITY_LEVELS.map((level) => (
-          <button
-            key={level}
-            role="tab"
-            aria-selected={activeLevel === level}
-            className={`mb-prio-pill ${priorityStyle(level).cls} ${activeLevel === level ? 'active' : ''}`}
-            onClick={() => showLevel(activeLevel === level ? null : level)}
-          >
-            {priorityStyle(level).label}
-            <span className="mb-prio-count">{counts[level] || 0}</span>
+      {/* Compact color-coded stat chips (V2) — click a priority to open its page */}
+      <div className="mb-stat-chips" role="navigation" aria-label="Priority and security overview">
+        <button className="mb-stat-chip chip-critical" onClick={() => navigate('/priority/CRITICAL')}>
+          <span className={`prio-dot prio-dot-critical`} aria-hidden="true"></span>
+          Critical <b>{counts.CRITICAL || 0}</b>
+        </button>
+        <button className="mb-stat-chip chip-high" onClick={() => navigate('/priority/HIGH')}>
+          <span className="prio-dot prio-dot-high" aria-hidden="true"></span>
+          High <b>{counts.HIGH || 0}</b>
+        </button>
+        <button className="mb-stat-chip chip-normal" onClick={() => navigate('/priority/NORMAL')}>
+          <span className="prio-dot prio-dot-normal" aria-hidden="true"></span>
+          Normal <b>{counts.NORMAL || 0}</b>
+        </button>
+        <button className="mb-stat-chip chip-low" onClick={() => navigate('/priority/LOW')}>
+          <span className="prio-dot prio-dot-low" aria-hidden="true"></span>
+          Low <b>{counts.LOW || 0}</b>
+        </button>
+        {threats > 0 && (
+          <button className="mb-stat-chip chip-security" onClick={() => navigate('/security')}>
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Security concerns <b>{threats}</b>
           </button>
-        ))}
+        )}
       </div>
 
-      {/* Level drill-down */}
-      {activeLevel && (
-        <div className="card" style={{ marginBottom: 'var(--space-4)' }}>
-          <div className="card-header">
-            <span className="card-title">{priorityStyle(activeLevel).label} emails</span>
-            <button className="btn btn-ghost btn-sm" onClick={() => showLevel(null)}>Clear filter</button>
-          </div>
-          <div className="card-body" style={{ padding: 0 }}>
-            {levelEmails === null ? (
-              <div className="empty-state-inline"><span className="empty-state-text">Loading…</span></div>
-            ) : levelEmails.length === 0 ? (
-              <div className="empty-state-inline"><span className="empty-state-text">No emails at this priority level.</span></div>
-            ) : (
-              <div className="mb-email-rows">
-                {levelEmails.map((email) => (
-                  <div key={email.id} className="mb-email-row" onClick={() => navigate(`/emails/${email.id}`)}>
-                    <div className="mb-email-row-main">
-                      <div className="mb-email-row-sender">{email.sender || email.sender_email}</div>
-                      <div className="mb-email-row-subject">{email.subject || '(no subject)'}</div>
-                    </div>
-                    <div className="mb-email-row-side">
-                      <PriorityBadge level={email.priority} />
-                      <CategoryBadge category={email.category} />
-                      <SecurityBadge classification={email.security} riskScore={email.risk_score} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Level drill-down — now lives on the dedicated Priority pages */}
 
       {/* Attention required */}
       <div className="card" style={{ marginBottom: 'var(--space-4)' }}>

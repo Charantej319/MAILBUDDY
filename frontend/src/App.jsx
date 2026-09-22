@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react'
-import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom'
+import { Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
 import EmailList from './pages/EmailList'
 import EmailAnalysis from './pages/EmailAnalysis'
 import Analytics from './pages/Analytics'
 import Settings from './pages/Settings'
+import PriorityPage from './pages/PriorityPage'
+import SecurityPage from './pages/SecurityPage'
 import AssistantPanel from './components/AssistantPanel'
 import NotificationBridge from './components/NotificationBridge'
 import MailBuddyBrand from './components/MailBuddyBrand'
 import { api } from './services/api'
+import { LEVEL_META } from './utils/priority'
 
 const Icons = {
   shield: (
@@ -24,6 +27,11 @@ const Icons = {
   mail: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
+    </svg>
+  ),
+  flag: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>
     </svg>
   ),
   chart: (
@@ -47,22 +55,62 @@ function App() {
   const location = useLocation()
   const [gmailStatus, setGmailStatus] = useState({ connected: false, email: null, last_sync: null })
   const [assistantOpen, setAssistantOpen] = useState(false)
+  // Email context for the assistant: { id, subject } when opened from an email,
+  // null for global mailbox chat.
+  const [assistantEmail, setAssistantEmail] = useState(null)
 
   useEffect(() => {
     api.getGmailStatus().then(setGmailStatus).catch(() => {})
   }, [location.pathname])
 
+  const openGlobalAssistant = () => {
+    setAssistantEmail(null)
+    setAssistantOpen(true)
+  }
+
+  const openEmailAssistant = (email, question = null) => {
+    if (email?.id) {
+      setAssistantEmail({ id: email.id, subject: email.subject, prefill: question || undefined })
+      setAssistantOpen(true)
+    }
+  }
+
+  const clearAssistantPrefill = () => {
+    setAssistantEmail((prev) => (prev ? { id: prev.id, subject: prev.subject } : prev))
+  }
+
   const navItems = [
     { path: '/', label: 'Dashboard', icon: Icons.dashboard },
-    { path: '/emails', label: 'Emails', icon: Icons.mail },
+    { path: '/emails', label: 'Inbox', icon: Icons.mail },
+    { path: '/priority', label: 'Priority', icon: Icons.flag },
+    { path: '/security', label: 'Security', icon: Icons.shield },
     { path: '/analytics', label: 'Analytics', icon: Icons.chart },
     { path: '/settings', label: 'Settings', icon: Icons.settings },
   ]
 
   const isActive = (path) => {
     if (path === '/') return location.pathname === '/'
+    if (path === '/priority') return location.pathname.startsWith('/priority')
+    if (path === '/security') return location.pathname.startsWith('/security')
     return location.pathname.startsWith(path)
   }
+
+  // Priority summary for the sidebar counts (dashboard already fetches this;
+  // the sidebar keeps its own lightweight copy so it works on every screen).
+  const [priorityCounts, setPriorityCounts] = useState(null)
+  useEffect(() => {
+    let cancelled = false
+    const load = () => api.getPrioritySummary().then((s) => { if (!cancelled) setPriorityCounts(s?.counts || {}) }).catch(() => {})
+    load()
+    const t = setInterval(load, 60000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [])
+  useEffect(() => {
+    // refresh counts right after navigating (uploads/syncs change them)
+    api.getPrioritySummary().then((s) => setPriorityCounts(s?.counts || {})).catch(() => {})
+  }, [location.pathname])
+
+  const sidebarPriorities = ['CRITICAL', 'HIGH', 'NORMAL', 'LOW']
 
   return (
     <div className="app-layout">
@@ -72,20 +120,53 @@ function App() {
         </div>
 
         <nav className="sidebar-nav">
-          <div className="sidebar-section-label">Navigation</div>
+          <div className="sidebar-section-label">Mailbox</div>
           {navItems.map(item => (
             <Link
               key={item.path}
               to={item.path}
               className={`sidebar-link ${isActive(item.path) ? 'active' : ''}`}
+              aria-current={isActive(item.path) ? 'page' : undefined}
             >
               {item.icon}
               {item.label}
             </Link>
           ))}
+
+          <div className="sidebar-section-label" style={{ marginTop: 10 }}>Priority</div>
+          {sidebarPriorities.map((level) => {
+            const meta = LEVEL_META[level]
+            const active = location.pathname === `/priority/${level}`
+            const count = priorityCounts?.[level]
+            return (
+              <Link
+                key={level}
+                to={`/priority/${level}`}
+                className={`sidebar-link sidebar-prio-link ${meta.icon} ${active ? 'active' : ''}`}
+                aria-current={active ? 'page' : undefined}
+              >
+                <span className={`prio-dot ${meta.dot}`} aria-hidden="true"></span>
+                <span className="sidebar-prio-label">{meta.label}</span>
+                {count !== undefined && count !== null && (
+                  <span className="sidebar-prio-count" aria-label={`${count} ${meta.label.toLowerCase()} emails`}>{count}</span>
+                )}
+              </Link>
+            )
+          })}
         </nav>
 
         <div className="sidebar-footer">
+          <button
+            className={`sidebar-link sidebar-assistant-btn ${assistantOpen ? 'active' : ''}`}
+            onClick={openGlobalAssistant}
+            aria-label="Ask MailBuddy"
+            title="Ask MailBuddy"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            Ask MailBuddy
+          </button>
           <Link to="/settings" className="sidebar-link gmail-footer-link">
             <span className={`gmail-status-dot ${gmailStatus.connected ? 'connected' : ''}`}></span>
             {gmailStatus.connected ? 'Gmail Connected' : 'Gmail Not Connected'}
@@ -101,7 +182,7 @@ function App() {
           <div className="topbar-actions">
             <button
               className="topbar-assistant-btn"
-              onClick={() => setAssistantOpen((o) => !o)}
+              onClick={() => (assistantOpen ? setAssistantOpen(false) : openGlobalAssistant())}
               aria-label="Open MailBuddy Assistant"
               title="MailBuddy Assistant"
             >
@@ -126,14 +207,23 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard gmailStatus={gmailStatus} />} />
             <Route path="/emails" element={<EmailList gmailStatus={gmailStatus} />} />
-            <Route path="/emails/:id" element={<EmailAnalysis />} />
+            <Route path="/emails/:id" element={<EmailAnalysis onAskAssistant={openEmailAssistant} />} />
+            <Route path="/priority" element={<PriorityPage />} />
+            <Route path="/priority/:level" element={<PriorityPage />} />
+            <Route path="/security" element={<SecurityPage />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/settings" element={<Settings gmailStatus={gmailStatus} setGmailStatus={setGmailStatus} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
 
-        <AssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
+        <AssistantPanel
+          open={assistantOpen}
+          onClose={() => setAssistantOpen(false)}
+          emailContext={assistantEmail}
+          onClearContext={() => setAssistantEmail(null)}
+          onPrefillDone={clearAssistantPrefill}
+        />
         <NotificationBridge />
       </div>
     </div>
