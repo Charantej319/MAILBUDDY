@@ -26,6 +26,10 @@ router = APIRouter(prefix="/api/mailbuddy")
 
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
+    # Optional id (analysis id or Gmail message id) of the email the user is
+    # currently viewing. The backend loads the email itself — the client never
+    # submits email content or mailbox data.
+    email_id: str | None = Field(default=None, max_length=200)
 
 
 class ChatMessage(BaseModel):
@@ -158,10 +162,16 @@ async def analyze_batch(body: dict | None = None, db: Session = Depends(get_db))
 
 @router.post("/assistant/chat")
 async def assistant_chat(body: ChatRequest, db: Session = Depends(get_db)):
-    """Ask the read-only MailBuddy Assistant about your inbox."""
+    """Ask the read-only MailBuddy Assistant about your inbox.
+
+    With email_id: grounded answer about THAT email (backend loads it).
+    Without: intent-routed mailbox question over a bounded candidate set.
+    """
     enabled = service.get_setting(db, "assistant_enabled")
     if enabled != "true":
         raise HTTPException(status_code=409, detail="MailBuddy Assistant is disabled in Settings")
+    if body.email_id:
+        return await assistant.answer_about_email(db, body.email_id, body.question)
     result = await assistant.answer_question(db, body.question)
     return result
 
@@ -205,6 +215,13 @@ async def assistant_chat_context(body: ChatContextRequest, db: Session = Depends
 def assistant_history():
     """Recent in-memory conversation (best-effort, per backend process)."""
     return {"messages": assistant.chat_history()}
+
+
+@router.post("/assistant/clear")
+def assistant_clear():
+    """Clear the current in-memory chat (Settings: 'Clear current chat')."""
+    assistant.clear_history()
+    return {"cleared": True}
 
 
 # ---- Notifications ------------------------------------------------------------
