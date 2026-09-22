@@ -1,0 +1,16 @@
+{
+  "shots": [
+    "reports\\ui_redesign\\01_dashboard.png",
+    "reports\\ui_redesign\\02_inbox.png",
+    "reports\\ui_redesign\\03_inbox_assistant_open.png",
+    "reports\\ui_redesign\\04_assistant_answer.png",
+    "reports\\ui_redesign\\05_email_detail.png",
+    "reports\\ui_redesign\\06_email_context_answer.png",
+    "reports\\ui_redesign\\07_analytics.png",
+    "reports\\ui_redesign\\08_settings.png",
+    "reports\\ui_redesign\\09_settings_narrow.png",
+    "reports\\ui_redesign\\10_dashboard_narrow.png"
+  ],
+  "errors": [],
+  "assistantHasAnswer": false
+}

@@ -152,6 +152,49 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 
 **Note**: The .eml upload feature works without Gmail OAuth.
 
+## 🖥️ Desktop Application (MailBuddy.exe)
+
+The packaged Windows app ships the same codebase with **no dev server involved**:
+
+```
+MailBuddy.exe (Electron)
+        ↓ spawns
+phishguard-backend.exe (PyInstaller FastAPI) bound to 127.0.0.1:8000
+        ↓ health-gated startup (polls /api/health)
+Electron window loads http://localhost:8000
+        ↓ same origin serves the React SPA + API + session cookies
+```
+
+| | Development | Packaged |
+|---|---|---|
+| Frontend | Vite dev server `:5173` (proxies `/api` + `/auth`) | React build served by FastAPI itself |
+| Backend | uvicorn on `127.0.0.1:8000` | PyInstaller exe on `127.0.0.1:8000` |
+| App origin | `http://localhost:5173` | `http://localhost:8000` (SPA + API + cookies) |
+| OAuth callback | `http://localhost:8000/auth/google/callback` (same in both) | same |
+| Data directory | `backend/` (dev layout) | `%APPDATA%\PhishGuard` (`phishguard.db`, `uploads/`, `logs/`, runtime `.env`) |
+| Secrets | `backend/.env` | `%APPDATA%\PhishGuard\.env` — **never bundled** into the installer |
+
+Notes:
+
+- The app window always uses the `localhost` origin (not `127.0.0.1`) because the Google-registered callback sets the `phishguard_session` cookie on host `localhost` — cookie hosts are per-name in Chromium, and using `localhost` in the window is what makes the Gmail connection persist across app restarts.
+- The post-auth OAuth redirect is same-origin in both modes (derived from the request Host), so the packaged app never redirects to the Vite dev server.
+- Backend stdout/stderr is captured to `%APPDATA%\PhishGuard\logs\backend.log` for diagnosis.
+
+### Building the installer
+
+```powershell
+# 1. Frontend production build
+cd frontend
+npm run build
+cd ..
+
+# 2. PyInstaller backend bundle (packaging/dist/phishguard-backend/)
+powershell -ExecutionPolicy Bypass -File packaging/build_backend.ps1
+
+# 3. NSIS installer → desktop/dist/MailBuddy-Setup-1.0.0.exe
+powershell -ExecutionPolicy Bypass -File packaging/build_installer.ps1
+```
+
 ## 📤 Analyzing Emails
 
 ### Upload .eml File

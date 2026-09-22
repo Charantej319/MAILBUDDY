@@ -1,0 +1,16 @@
+{
+  "shots": [
+    "reports\\ui_prod_regression\\01_dashboard.png",
+    "reports\\ui_prod_regression\\02_inbox.png",
+    "reports\\ui_prod_regression\\03_inbox_assistant_open.png",
+    "reports\\ui_prod_regression\\04_assistant_answer.png",
+    "reports\\ui_prod_regression\\05_email_detail.png",
+    "reports\\ui_prod_regression\\06_email_context_answer.png",
+    "reports\\ui_prod_regression\\07_analytics.png",
+    "reports\\ui_prod_regression\\08_settings.png",
+    "reports\\ui_prod_regression\\09_settings_narrow.png",
+    "reports\\ui_prod_regression\\10_dashboard_narrow.png"
+  ],
+  "errors": [],
+  "assistantHasAnswer": true
+}

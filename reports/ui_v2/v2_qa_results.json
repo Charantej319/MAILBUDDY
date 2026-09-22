@@ -1,0 +1,73 @@
+{
+  "results": [
+    {
+      "name": "dashboard stat chips render",
+      "ok": true,
+      "detail": "[\"Critical 2\",\"High 3\",\"Normal 9\",\"Low 11\",\"Security concerns 5\"]"
+    },
+    {
+      "name": "sidebar priority section has 4 levels with counts",
+      "ok": true,
+      "detail": "[{\"text\":\"Critical\",\"count\":\"2\",\"cls\":\"icon-critical\"},{\"text\":\"High\",\"count\":\"3\",\"cls\":\"icon-high\"},{\"text\":\"Normal\",\"count\":\"9\",\"cls\":\"icon-normal\"},{\"text\":\"Low\",\"count\":\"11\",\"cls\":\"icon-low\"}]"
+    },
+    {
+      "name": "per-level tint classes applied",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "critical page header shows level + count",
+      "ok": true,
+      "detail": "{\"h1\":\"Critical\",\"sub\":\"2 messages require attention\",\"chip\":\"CRITICAL\",\"cls\":\"page-header prio-page-header icon-critical\"}"
+    },
+    {
+      "name": "critical page carries icon-critical accent class",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "high page carries icon-high accent class + HIGH chip",
+      "ok": true,
+      "detail": "page-header prio-page-header icon-high / HIGH"
+    },
+    {
+      "name": "email opens from priority page",
+      "ok": true,
+      "detail": "/emails/b2a9dcd7-c47e-4a23-8d69-b11b6bb6a80b"
+    },
+    {
+      "name": "email detail shows priority + security separately",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "security buckets render with counts",
+      "ok": true,
+      "detail": "[{\"label\":\"Safe\",\"count\":\"22\"},{\"label\":\"Review\",\"count\":\"0\"},{\"label\":\"Suspicious\",\"count\":\"5\"},{\"label\":\"Threat\",\"count\":\"0\"}]"
+    },
+    {
+      "name": "security bucket filters list",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "inbox rows show priority dots (neutral rows)",
+      "ok": true,
+      "detail": "27/27"
+    },
+    {
+      "name": "assistant quick actions have meaning-based chips",
+      "ok": true,
+      "detail": "[{\"text\":\"What needs my attention?\",\"cls\":[\"chip-critical\"]},{\"text\":\"Show suspicious emails\",\"cls\":[\"chip-security\"]},{\"text\":\"Summarize today's mail\",\"cls\":[\"chip-mail\"]},{\"text\":\"Find internship emails\",\"cls\":[\"chip-job\"]}]"
+    },
+    {
+      "name": "assistant answers in V2 UI",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "consoleErrors": [
+    "log: Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+    "log: Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ]
+}
