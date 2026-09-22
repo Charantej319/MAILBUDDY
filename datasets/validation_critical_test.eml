@@ -1,0 +1,25 @@
+From: "MailBuddy Validation" <security-alerts@validation.mailbuddy.local>
+To: geralt.thewitcher432@gmail.com
+Subject: [VALIDATION-TEST] Unusual sign-in attempt - verify code 774913
+Date: Mon, 21 Sep 2026 06:30:00 +0000
+Message-ID: <validation-critical-20260921@validation.mailbuddy.local>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Hello,
+
+We detected an unusual sign-in attempt on your account from a new device.
+
+Device: Windows PC
+Location: Bengaluru, IN
+Time: 2026-09-21 06:25 UTC
+
+Your verification code is: 774913
+
+If this was you, enter the security code to confirm the sign-in.
+If you did not attempt to sign in, your password should be reset immediately.
+
+Action required: confirm by 2026-09-23 or the account will be locked.
+
+Thank you,
+Account Security Team
