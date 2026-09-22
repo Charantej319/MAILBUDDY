@@ -72,6 +72,28 @@ test('defaultDataDir is %APPDATA%/PhishGuard', () => {
   assert.ok(backend.defaultDataDir({ appData: 'C:/Users/x/AppData/Roaming' }).endsWith('PhishGuard'));
 });
 
+// ── 3b. Window-origin guarantee (cookie-host match with OAuth callback) ──
+// The Google-registered redirect URI is http://localhost:8000/auth/google/callback,
+// which sets the phishguard_session cookie on host "localhost". The BrowserWindow
+// MUST load http://localhost:<port> (not 127.0.0.1) or the Gmail session silently
+// disappears after an app restart.
+test('main.js loads the app window on the localhost origin, not 127.0.0.1', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /APP_ORIGIN = `http:\/\/localhost:\$\{BACKEND_PORT\}`/,
+               'APP_ORIGIN must be http://localhost:<port>');
+  assert.match(src, /win\.loadURL\(APP_ORIGIN\)/, 'window must load APP_ORIGIN');
+  assert.doesNotMatch(src, /win\.loadURL\(BACKEND_URL\)/,
+                      'window must not load the 127.0.0.1 BACKEND_URL');
+});
+
+test('desktop declares the AppUserModelID so Windows notifications display', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /setAppUserModelId\(['"]com\.phishguard\.desktop['"]\)/);
+  const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  assert.match(preload, /contextBridge\.exposeInMainWorld\(['"]electronAPI['"]/);
+  assert.match(preload, /mailbuddy:notification/);
+});
+
 // ── 4. Health-check behavior ─────────────────────────────────────────
 function makeServer(payload, statusCode = 200) {
   return new Promise((resolve) => {

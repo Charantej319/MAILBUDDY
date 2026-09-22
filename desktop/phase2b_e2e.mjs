@@ -89,6 +89,13 @@ async function main() {
     if (r.exceptionDetails) return null;
     return r.result?.value;
   };
+
+  // 0. Window origin — MUST be localhost (not 127.0.0.1): the OAuth callback
+  //    cookie is set on host "localhost", so the app must live there for the
+  //    Gmail session to persist across restarts.
+  const origin = await evalJs('location.origin');
+  check('E2E: window origin is http://localhost:8000 (cookie-host match with OAuth callback)',
+        origin === 'http://localhost:8000', origin);
   const nav = async (route, waitMs) => {
     consoleMsgs.length = 0; pageErrors.length = 0;
     await cdp.send('Runtime.evaluate', { expression: `location.hash=''; history.pushState({}, '', '${route}'); window.dispatchEvent(new PopStateEvent('popstate'));` });
@@ -107,8 +114,8 @@ async function main() {
 
   // 1. Dashboard
   let text = await evalJs('document.body.innerText');
-  check('E2E: dashboard rendered', has(text, /Dashboard/i) && has(text, /PhishGuard/i), '');
-  check('E2E: dashboard title present', has(text, /EMAILS ANALYZED|Operational overview/i), '');
+  check('E2E: dashboard rendered', has(text, /Dashboard/i) && has(text, /MailBuddy/i), '');
+  check('E2E: dashboard title present', has(text, /EMAILS ANALYZED|Here's what needs your attention|Good (morning|afternoon|evening)/i), '');
 
   // 2. Emails list via in-app nav (SPA)
   text = await nav('/emails', 2500);

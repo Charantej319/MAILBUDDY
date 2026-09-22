@@ -17,11 +17,24 @@
 
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, shell, ipcMain, Notification } = require('electron');
 const backend = require('./backend');
 
 const APP_TITLE = 'MailBuddy';
-const BACKEND_URL = backend.BACKEND_URL; // http://127.0.0.1:8000
+
+// Windows toast notifications require the process to declare an AppUserModelID
+// matching the installed shortcut's AppID, otherwise toasts are dropped or
+// misattributed to Electron. Same appId as electron-builder.json.
+app.setAppUserModelId('com.phishguard.desktop');
+const BACKEND_PORT = backend.BACKEND_PORT;
+// App window origin is ALWAYS http://localhost:<port>, even though the backend
+// binds 127.0.0.1 (same interface). Cookie hosts are per-name in Chromium: the
+// Google-registered callback (http://localhost:8000/auth/google/callback) sets
+// the phishguard_session cookie on host "localhost" — if the window lived on
+// 127.0.0.1, that cookie would never attach again after an app restart and
+// Gmail would look disconnected. Everything (SPA, API, cookies, OAuth callback)
+// consistently uses the same origin so the session persists across restarts.
+const APP_ORIGIN = `http://localhost:${BACKEND_PORT}`;
 const shouldQuit = process.argv.includes('--e2e-quit-after');
 const lockAcquired = app.requestSingleInstanceLock();
 
@@ -126,6 +139,25 @@ async function startBackendOrDie() {
   return backendProc;
 }
 
+// Notification IPC: the ONLY bridge surface (see preload.js). The renderer
+// sends bounded strings; the main process owns the AppUserModelID and delivers
+// the native toast. No file paths, shell access or tokens cross this boundary.
+function registerNotificationIpc() {
+  ipcMain.on('mailbuddy:notification', (_event, { title, body } = {}) => {
+    if (typeof title !== 'string' || typeof body !== 'string') return;
+    try {
+      new Notification({
+        title: title.slice(0, 140),
+        body: body.slice(0, 300),
+        silent: false,
+      }).show();
+    } catch (err) {
+      // Notifications are best-effort; never crash the app on toast failures.
+      console.error('notification failed:', err.message);
+    }
+  });
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1360,
@@ -142,32 +174,34 @@ function createWindow() {
       nodeIntegration: false,   // no Node in the renderer
       sandbox: true,            // renderer sandboxed
       webviewTag: false,
-      // Nothing custom is exposed; the app is plain same-origin web content.
+      // The ONLY custom surface is the one-way notification bridge in preload.js.
     },
   });
 
   // The existing React app handles all navigation internally (BrowserRouter).
   // The Google OAuth consent screen is allowed to navigate IN the app window so
-  // the existing callback (http://localhost:8000/auth/google/callback) returns
+  // the registered callback (http://localhost:8000/auth/google/callback) returns
   // into this same window — no OAuth code changes, cookie lands on the app
-  // origin. Any other external target opens in the default browser; email
-  // links remain non-clickable sanitized text per the existing security model
-  // (we never auto-open them).
+  // origin (localhost, matching the window origin above). Any other external
+  // target opens in the default browser; email links remain non-clickable
+  // sanitized text per the existing security model (we never auto-open them).
   const GOOGLE_AUTH_HOSTS = /^https:\/\/(accounts\.google\.com|www\.googleusercontent\.com|ssl\.gstatic\.com|www\.google\.com)\//i;
+  const LOCAL_APP_ORIGINS = new RegExp(
+    `^https?:\\/\\/(localhost|127\\.0\\.0\\.1)(:${BACKEND_PORT})?(/|$)`,
+    'i');
   win.webContents.setWindowOpenHandler(({ url }) => {
     // Consent flows that insist on popups go to the default browser instead.
     if (GOOGLE_AUTH_HOSTS.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (event, url) => {
-    const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(url + '/');
-    if (local || GOOGLE_AUTH_HOSTS.test(url) || url.startsWith('data:')) return; // allowed in-app
+    if (LOCAL_APP_ORIGINS.test(url) || GOOGLE_AUTH_HOSTS.test(url) || url.startsWith('data:')) return; // allowed in-app
     event.preventDefault();
     if (/^https:\/\//i.test(url)) shell.openExternal(url); // explicit https only
   });
 
   win.once('ready-to-show', () => win.show());
-  win.loadURL(BACKEND_URL); // http://127.0.0.1:8000 — the React SPA + API origin
+  win.loadURL(APP_ORIGIN); // http://localhost:8000 — same host the OAuth callback cookie is set on
   return win;
 }
 
@@ -176,6 +210,7 @@ app.on('before-quit', () => { app.isQuitting = true; });
 
 app.whenReady().then(async () => {
   try {
+    registerNotificationIpc();
     await startBackendOrDie();
     createWindow();
     if (shouldQuit) {
