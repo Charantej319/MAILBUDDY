@@ -40,6 +40,10 @@ a = Analysis(
         + collect_submodules("detection")
         # drivers/db layers that import dynamically
         + ["sqlalchemy.dialects.sqlite", "anyio._backends._asyncio"]
+        # token encryption at rest (Finding 17): native _rust extension is
+        # collected by the community hook; the explicit entry guarantees the
+        # package itself is bundled even if import analysis skips it.
+        + ["cryptography"]
     ),
     hookspath=[],
     hooksconfig={},

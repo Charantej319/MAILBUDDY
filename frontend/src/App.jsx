@@ -63,6 +63,28 @@ function App() {
     api.getGmailStatus().then(setGmailStatus).catch(() => {})
   }, [location.pathname])
 
+  // F-23: background polling is enabled by default — auto-start it once per
+  // app load when an authenticated Gmail account exists. The backend is the
+  // authority: it requires a session cookie + a connected token row, and is
+  // idempotent ('already_polling' instead of a duplicate poller).
+  useEffect(() => {
+    let cancelled = false
+    const ensurePolling = async () => {
+      try {
+        const status = await api.getGmailStatus()
+        if (cancelled || !status?.connected) return
+        const res = await api.startGmailPolling()
+        if (!cancelled && res?.status) {
+          // 'started' | 'already_polling' — both are success; no UI action needed.
+        }
+      } catch {
+        // Polling is best-effort: sync still works manually from Settings.
+      }
+    }
+    ensurePolling()
+    return () => { cancelled = true }
+  }, [])
+
   const openGlobalAssistant = () => {
     setAssistantEmail(null)
     setAssistantOpen(true)

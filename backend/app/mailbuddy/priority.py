@@ -24,6 +24,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
+from detection.rules import is_risky_level
+
 VALID_LEVELS = ("CRITICAL", "HIGH", "IMPORTANT", "NORMAL", "LOW")
 VALID_CATEGORIES = (
     "SECURITY", "JOB", "INTERNSHIP", "ACADEMIC", "PERSONAL",
@@ -280,7 +282,8 @@ def heuristic_classify(
         if level == "NORMAL":
             level = "LOW"
         reasons.append("Bulk/promotional sender characteristics")
-    if security_classification in ("HIGH_RISK", "SUSPICIOUS") and level in ("NORMAL", "IMPORTANT"):
+    # Dual-form: canonical underscore values plus legacy spaced values.
+    if is_risky_level(security_classification) and level in ("NORMAL", "IMPORTANT"):
         # A security-flagged email deserves attention either way — as
         # "look at this", never as "trust this". Security stays separate.
         level = "HIGH"

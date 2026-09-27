@@ -26,6 +26,8 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from ..models.email import EmailAnalysis
+from ..auth.account_context import owns_row, scope_owner
+from detection.rules import RiskLevel, is_risky_level
 from . import priority_ai
 from .priority_ai import _cfg as _groq_cfg  # reuse existing Groq config gating
 
@@ -95,21 +97,36 @@ def _recent_first(query):
     return query.order_by(EmailAnalysis.created_at.desc())
 
 
-def retrieve_email(db, email_id: str):
-    """Fetch one email by id OR Gmail message id (for email-context chat)."""
+def retrieve_email(db, email_id: str, account: str | None = None):
+    """Fetch one email by id OR Gmail message id (for email-context chat).
+
+    F-16: when an account is supplied the row must belong to that account
+    (or be a legacy NULL-owner row). An ID from Account A can never retrieve
+    Account B's email.
+    """
     if not email_id:
         return None
-    return (
+    row = (
         db.query(EmailAnalysis)
         .filter((EmailAnalysis.id == email_id) | (EmailAnalysis.email_id == email_id))
         .first()
     )
+    if row is None:
+        return None
+    if account is not None and not owns_row(row, account):
+        return None
+    return row
 
 
-def retrieve(db, question: str, limit: int = _MAX_REFERENCED_EMAILS):
-    """Route the question to a bounded, relevant candidate set. Returns (rows, intent)."""
+def retrieve(db, question: str, limit: int = _MAX_REFERENCED_EMAILS,
+             account: str | None = None):
+    """Route the question to a bounded, relevant candidate set. Returns (rows, intent).
+
+    F-16: candidates are scoped to the caller's account (legacy NULL-owner
+    rows included) so the assistant can never cite another account's mail.
+    """
     q = (question or "").lower()
-    base = _recent_first(db.query(EmailAnalysis))
+    base = _recent_first(scope_owner(db.query(EmailAnalysis), account))
 
     if re.search(r"\b(attention|needs? my attention|important today|should i (look|read)|urgent)\b", q):
         rows = base.filter(EmailAnalysis.priority_level.in_(("CRITICAL", "HIGH"))).limit(limit).all()
@@ -133,7 +150,13 @@ def retrieve(db, question: str, limit: int = _MAX_REFERENCED_EMAILS):
         )
         return rows, "deadline"
     if re.search(r"\b(suspicious|phishing|scam|high risk|dangerous|unsafe)\b", q):
-        rows = base.filter(EmailAnalysis.classification.in_(("SUSPICIOUS", "HIGH_RISK"))).limit(limit).all()
+        # Dual-form: canonical "HIGH_RISK" (detection.rules.RiskLevel) plus
+        # legacy "HIGH RISK" rows persisted before F-21 normalization.
+        rows = base.filter(
+            EmailAnalysis.classification.in_(
+                ("SUSPICIOUS", RiskLevel.HIGH_RISK, "HIGH RISK")
+            )
+        ).limit(limit).all()
         return rows, "suspicious"
     if re.search(r"\b(how many|count)\b", q) and re.search(r"\b(critical|high|suspicious)\b", q):
         rows = base.filter(EmailAnalysis.priority_level.in_(("CRITICAL", "HIGH"))).limit(limit).all()
@@ -181,9 +204,18 @@ def _candidate_block(rows) -> str:
 
 
 def _safe_snippet(text: str) -> str:
-    """Fence email snippets so embedded 'instructions' stay visibly content."""
-    text = (text or "").replace("```", "'''")
-    return f"<email_content>{text}</email_content>"
+    """Fence email snippets so embedded 'instructions' stay visibly content.
+
+    F-22: the fencing itself comes from the SHARED sanitizer
+    (backend.app.utils.prompt_fencing) — the same helper the AI verifier
+    uses. Email content can never emit a literal '</email_content>' (any
+    case/whitespace variant), nor introduce new tags ('<system>', etc.), so
+    an attacker-controlled body cannot escape the untrusted-content boundary
+    and pose as prompt scaffolding. Content is otherwise preserved and
+    bounded.
+    """
+    from ..utils.prompt_fencing import fence_block
+    return fence_block(text or "", "email_content")
 
 
 # ---- Deterministic answers --------------------------------------------------
@@ -290,7 +322,11 @@ def _deterministic_email_answer(row: EmailAnalysis, question: str) -> str:
     q = (question or "").lower()
     findings = sorted(_load_findings(row), key=_severity_order)
     top = findings[:3]
-    is_flagged = row.classification in ("SUSPICIOUS", "HIGH_RISK", "HIGH RISK")
+    # Dual-form: canonical underscore values plus legacy spaced values.
+    is_flagged = (
+        row.classification in ("SUSPICIOUS", "HIGH RISK")
+        or is_risky_level(row.classification)
+    )
 
     if re.search(r"\b(flag|suspicious|phishing|scam|safe|danger|risk|malicious)\b", q) or is_flagged and re.search(r"\bwhy\b", q):
         if is_flagged:
@@ -385,13 +421,15 @@ async def _phrase_email_with_ai(row: EmailAnalysis, question: str, history) -> d
         return None
 
 
-async def answer_about_email(db, email_id: str, question: str, history=None) -> dict:
+async def answer_about_email(db, email_id: str, question: str, history=None,
+                             account: str | None = None) -> dict:
     """Answer a question about ONE specific email using its stored analysis.
 
     The backend fetches the email itself — the client only supplies the id.
     Read-only, grounded, minimal context (this email only).
+    F-16: the email must belong to *account* when provided.
     """
-    row = retrieve_email(db, email_id)
+    row = retrieve_email(db, email_id, account=account)
     if row is None:
         return {
             "answer": "I could not find that email in the messages currently available to MailBuddy.",
@@ -414,8 +452,10 @@ async def answer_about_email(db, email_id: str, question: str, history=None) -> 
         "deadline": row.priority_deadline.date().isoformat() if row.priority_deadline else None,
         "url": f"/emails/{row.id}",
     }
-    _HISTORY.append({"role": "user", "content": question})
-    _HISTORY.append({"role": "assistant", "content": answer})
+    history = _history_for(account)
+    history.append({"role": "user", "content": question})
+    history.append({"role": "assistant", "content": answer})
+
     return {
         "answer": answer,
         "intent": "email_context",
@@ -464,26 +504,44 @@ async def _phrase_with_ai(question: str, rows, history) -> dict | None:
 
 # ---- Conversation history (in-memory, best-effort) ---------------------------
 
-_HISTORY = deque(maxlen=30)
+# F-16: history is keyed BY ACCOUNT. The previous process-global deque let
+# Account A's questions/answers surface in Account B's assistant context.
+# Key None = callers with no Gmail session (legacy/public surface).
+_HISTORY: dict[str | None, deque] = {}
+_HISTORY_MAXLEN = 30
 
 
-def chat_history() -> list[dict]:
-    return list(_HISTORY)
+def _history_for(account: str | None) -> deque:
+    """The bounded conversation deque for one account (created on demand)."""
+    hist = _HISTORY.get(account)
+    if hist is None:
+        hist = deque(maxlen=_HISTORY_MAXLEN)
+        _HISTORY[account] = hist
+    return hist
 
 
-def clear_history() -> None:
+def chat_history(account: str | None = None) -> list[dict]:
+    """Recent in-memory conversation for ONE account (never another's)."""
+    return list(_HISTORY.get(account, ()))
+
+
+def clear_history(account: str | None = None) -> None:
     """Clear the in-memory conversation (Settings: 'Clear current chat')."""
-    _HISTORY.clear()
+    _HISTORY.pop(account, None)
 
 
 # ---- Public entry point -------------------------------------------------------
 
-async def answer_question(db, question: str) -> dict:
-    """Answer an inbox question with grounded retrieval. Read-only by design."""
-    rows, intent = retrieve(db, question)
+async def answer_question(db, question: str, account: str | None = None) -> dict:
+    """Answer an inbox question with grounded retrieval. Read-only by design.
+
+    F-16: retrieval is scoped to *account*; conversation history is keyed by
+    account so contexts never mix.
+    """
+    rows, intent = retrieve(db, question, account=account)
     deterministic = _deterministic_answer(rows, intent, question)
 
-    phrased = await _phrase_with_ai(question, rows, _HISTORY)
+    phrased = await _phrase_with_ai(question, rows, _history_for(account))
     answer = phrased["answer"] if phrased else deterministic
     refs = (phrased["refs"] if phrased else None) or list(range(1, len(rows) + 1))
 
@@ -503,8 +561,9 @@ async def answer_question(db, question: str) -> dict:
                 "url": f"/emails/{row.id}",
             })
 
-    _HISTORY.append({"role": "user", "content": question})
-    _HISTORY.append({"role": "assistant", "content": answer})
+    history = _history_for(account)
+    history.append({"role": "user", "content": question})
+    history.append({"role": "assistant", "content": answer})
 
     return {
         "answer": answer,

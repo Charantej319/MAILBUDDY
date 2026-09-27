@@ -53,7 +53,7 @@ class HeaderAnalyzer:
         return findings
 
     def _check_spf(self, spf_result: str) -> list[Finding]:
-        """Check SPF authentication result."""
+        """Check SPF authentication result (F-5: distinct verdict states)."""
         findings = []
         result = spf_result.lower().strip()
 
@@ -86,6 +86,20 @@ class HeaderAnalyzer:
                 ),
                 source="Email authentication headers",
             ))
+        elif result == 'neutral':
+            findings.append(Finding(
+                rule_id="HEADER_SPF_NEUTRAL",
+                category=Category.HEADER,
+                severity=Severity.LOW.value,
+                points=2,
+                message="SPF neutral — the sender's policy makes no assertion about this server.",
+                evidence=f"SPF result: {spf_result}",
+                explanation=(
+                    "SPF returned neutral: the domain's policy explicitly declines to assert "
+                    "whether this server is authorized. This is weaker evidence than a failure."
+                ),
+                source="Email authentication headers",
+            ))
         elif result == 'none':
             findings.append(Finding(
                 rule_id="HEADER_SPF_NONE",
@@ -100,11 +114,25 @@ class HeaderAnalyzer:
                 ),
                 source="Email authentication headers",
             ))
+        elif result in ('temperror', 'permerror'):
+            findings.append(Finding(
+                rule_id="HEADER_SPF_ERROR",
+                category=Category.HEADER,
+                severity=Severity.LOW.value,
+                points=2,
+                message=f"SPF evaluation error ({result}) — result inconclusive.",
+                evidence=f"SPF result: {spf_result}",
+                explanation=(
+                    "SPF could not be evaluated (temporary DNS error or permanent "
+                    "format error). This is NOT an authentication failure."
+                ),
+                source="Email authentication headers",
+            ))
 
         return findings
 
     def _check_dkim(self, dkim_result: str) -> list[Finding]:
-        """Check DKIM authentication result."""
+        """Check DKIM authentication result (F-5: distinct verdict states)."""
         findings = []
         result = dkim_result.lower().strip()
 
@@ -137,11 +165,25 @@ class HeaderAnalyzer:
                 ),
                 source="Email authentication headers",
             ))
+        elif result in ('temperror', 'permerror'):
+            findings.append(Finding(
+                rule_id="HEADER_DKIM_ERROR",
+                category=Category.HEADER,
+                severity=Severity.LOW.value,
+                points=2,
+                message=f"DKIM evaluation error ({result}) — result inconclusive.",
+                evidence=f"DKIM result: {dkim_result}",
+                explanation=(
+                    "DKIM could not be evaluated (temporary DNS error or permanent "
+                    "format error). This is NOT an authentication failure."
+                ),
+                source="Email authentication headers",
+            ))
 
         return findings
 
     def _check_dmarc(self, dmarc_result: str) -> list[Finding]:
-        """Check DMARC authentication result."""
+        """Check DMARC authentication result (F-5: distinct verdict states)."""
         findings = []
         result = dmarc_result.lower().strip()
 
@@ -174,18 +216,38 @@ class HeaderAnalyzer:
                 ),
                 source="Email authentication headers",
             ))
+        elif result in ('temperror', 'permerror'):
+            findings.append(Finding(
+                rule_id="HEADER_DMARC_ERROR",
+                category=Category.HEADER,
+                severity=Severity.LOW.value,
+                points=2,
+                message=f"DMARC evaluation error ({result}) — result inconclusive.",
+                evidence=f"DMARC result: {dmarc_result}",
+                explanation=(
+                    "DMARC could not be evaluated (temporary DNS error or permanent "
+                    "format error). This is NOT an authentication failure."
+                ),
+                source="Email authentication headers",
+            ))
 
         return findings
 
     def _analyze_auth_results(self, auth_header: str) -> list[Finding]:
-        """Deep analysis of Authentication-Results header."""
+        """Deep analysis of Authentication-Results header.
+
+        F-5: counts only EXPLICIT '=fail' verdicts using word-boundary-aware
+        token matching, so softfail/none/permerror tokens can never be
+        miscounted as failures ('softfail' contains 'fail').
+        """
         findings = []
 
         if not auth_header:
             return findings
 
-        # Check for multiple authentication failures
-        fail_count = auth_header.lower().count('=fail')
+        auth_lower = str(auth_header).lower()
+        # Explicit failure tokens only: spf=fail, dkim=fail (hard), dmarc=fail.
+        fail_count = len(re.findall(r"\b(?:spf|dkim|dmarc)\s*=\s*fail\b", auth_lower))
         if fail_count >= 2:
             findings.append(Finding(
                 rule_id="HEADER_MULTIPLE_AUTH_FAILURES",

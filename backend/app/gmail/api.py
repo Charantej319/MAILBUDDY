@@ -24,6 +24,12 @@ router = APIRouter(prefix="/api/gmail")
 engine = DetectionEngine()
 logger = logging.getLogger("phishguard.gmail")
 
+# F-30: bounded concurrency for per-message Gmail fetches. Sequential fetching
+# cost one network round-trip per message with no overlap; unbounded tasks
+# would risk Gmail rate limits. A small semaphore keeps parallelism bounded
+# while overlapping the per-message latency.
+GMAIL_FETCH_CONCURRENCY = 4
+
 # Background polling state
 _polling_task = None
 _polling_active = False
@@ -50,7 +56,8 @@ def _parse_date(date_str: str):
 
 def _store_gmail_analysis(parsed, results: dict, db: Session,
                           gmail_message_id: str, thread_id: str = None,
-                          raw_message: dict = None) -> EmailAnalysis:
+                          raw_message: dict = None,
+                          owner_account: str = None) -> EmailAnalysis:
     """Store Gmail analysis with deduplication check."""
     # Check for existing analysis with this Gmail message ID
     existing = db.query(EmailAnalysis).filter(
@@ -73,6 +80,9 @@ def _store_gmail_analysis(parsed, results: dict, db: Session,
         email_id=gmail_message_id,
         thread_id=thread_id,
         source="gmail",
+        # F-16: the Gmail account whose mailbox produced this message. The
+        # poller/sync endpoint passes its authenticated account identity.
+        owner_account=owner_account,
         sender=parsed.sender,
         sender_email=parsed.sender_email,
         sender_domain=parsed.sender_domain,
@@ -190,14 +200,14 @@ async def sync_gmail(
         skipped = 0
         results = []
 
-        for msg in messages:
-            message_id = msg["id"]
+        # F-30: fetch/parse new messages with BOUNDED concurrency instead of
+        # strictly sequentially. Detection + storage stay deterministic;
+        # message order in `results` follows the input order (gather preserves
+        # order), not completion order.
+        todo = [m["id"] for m in messages if m["id"] not in existing_ids]
+        skipped = len(messages) - len(todo)
 
-            # Skip already analyzed
-            if message_id in existing_ids:
-                skipped += 1
-                continue
-
+        async def _process(message_id: str) -> dict | None:
             try:
                 raw_message, parsed = await gmail_service.fetch_and_parse(message_id)
                 analysis_results = engine.analyze(parsed)
@@ -206,25 +216,43 @@ async def sync_gmail(
                 analysis = _store_gmail_analysis(
                     parsed, analysis_results, db, message_id, thread_id,
                     raw_message=raw_message,
+                    owner_account=user_email,
                 )
-
-                synced += 1
-                results.append({
+                return {
                     "id": analysis.id,
                     "email_id": message_id,
                     "sender": parsed.sender,
                     "subject": parsed.subject,
                     "risk_score": analysis_results["risk_score"],
                     "classification": analysis_results["classification"],
-                })
-
+                }
             except Exception as e:
                 # Log the failure server-side but continue processing other emails.
                 # Include str(e): for UnboundLocalError/KeyError the message names the
                 # culprit symbol; email content/tokens never appear in these messages.
                 logger.warning("Failed to process Gmail message %s: %s: %s", message_id[:12], type(e).__name__, e)
+                return None
+
+        semaphore = asyncio.Semaphore(GMAIL_FETCH_CONCURRENCY)
+
+        async def _bounded(mid: str) -> dict | None:
+            async with semaphore:
+                return await _process(mid)
+
+        # One shared connection pool for the whole loop (F-30): avoids a fresh
+        # TCP+TLS handshake per message.
+        gmail_service.use_shared_client()
+        try:
+            outcomes = await asyncio.gather(*(_bounded(mid) for mid in todo))
+        finally:
+            await gmail_service.aclose()
+
+        for outcome in outcomes:
+            if outcome is None:
                 skipped += 1
                 continue
+            synced += 1
+            results.append(outcome)
 
         return {
             "synced": synced,
@@ -271,6 +299,7 @@ async def analyze_single_gmail(
         analysis = _store_gmail_analysis(
             parsed, results, db, message_id, thread_id,
             raw_message=raw_message,
+            owner_account=user_email,
         )
 
         return {
@@ -309,7 +338,19 @@ async def analyze_single_gmail(
 
 
 async def _poll_gmail_background():
-    """Background task to poll Gmail for new emails."""
+    """Background task to poll Gmail for new emails (F-23 rewritten).
+
+    Guarantees:
+    - ONE fresh SQLAlchemy session per iteration (never a long-lived session
+      spanning the whole loop; SQLite locks are held briefly).
+    - Each connected account is polled against ITS OWN stored messages
+      (F-16 owner scoping — account A's sync state can never suppress or
+      expose account B's messages).
+    - Exceptions never kill the worker permanently: per-account and
+      per-message failures are logged and skipped; the loop continues.
+    - `_polling_active` is re-checked after every await, so stop requests
+      take effect promptly.
+    """
     global _polling_active
     from ..config import settings
 
@@ -322,50 +363,79 @@ async def _poll_gmail_background():
         if not _polling_active:
             break
 
+        # F-23: fresh session per iteration.
         db = SessionLocal()
         try:
-            # Get all connected Gmail users
-            tokens = db.query(GmailToken).all()
+            # Snapshot the connected accounts for THIS iteration only.
+            accounts = [row[0] for row in db.query(GmailToken.user_email).all()]
 
-            for token_record in tokens:
+            for account in accounts:
+                if not _polling_active:
+                    break
                 try:
-                    gmail_service = GmailService(token_record.user_email)
-
-                    # Get existing message IDs
-                    existing_ids = set(
-                        row[0] for row in db.query(EmailAnalysis.email_id)
-                        .filter(EmailAnalysis.source == "gmail")
-                        .filter(EmailAnalysis.email_id.isnot(None))
-                        .all()
-                    )
-
-                    # Check for new messages (last 10)
-                    messages = await gmail_service.list_messages(query="in:inbox", max_results=10)
-
-                    for msg in messages:
-                        message_id = msg["id"]
-                        if message_id in existing_ids:
-                            continue
-
-                        try:
-                            raw_message, parsed = await gmail_service.fetch_and_parse(message_id)
-                            results = engine.analyze(parsed)
-                            thread_id = raw_message.get("threadId")
-
-                            _store_gmail_analysis(
-                                parsed, results, db, message_id, thread_id,
-                                raw_message=raw_message,
-                            )
-                        except Exception as e:
-                            logger.warning("Polling: failed to process %s: %s", message_id[:12], type(e).__name__)
-                            continue
-
-                except Exception as e:
-                    logger.warning("Polling: failed for %s: %s", token_record.user_email, type(e).__name__)
+                    await _poll_account_once(db, account)
+                except Exception as e:  # noqa: BLE001
+                    # F-23: one account's failure must not kill the worker.
+                    logger.warning("Polling: failed for %s: %s", account, type(e).__name__)
                     continue
-
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Polling: iteration failed: %s", type(e).__name__)
         finally:
             db.close()
+
+
+async def _poll_account_once(db: Session, account: str):
+    """One polling unit of work for ONE account (own DB session usage).
+
+    Deduplication is account-scoped (F-16): only THIS account's stored
+    Gmail message IDs are considered 'existing', so the same Gmail message
+    ID synced for two different accounts is analyzed and stored twice —
+    once per owner — never cross-attributed.
+    """
+    gmail_service = GmailService(account)
+
+    existing_ids = set(
+        row[0] for row in db.query(EmailAnalysis.email_id)
+        .filter(EmailAnalysis.source == "gmail")
+        .filter(EmailAnalysis.owner_account == account)
+        .filter(EmailAnalysis.email_id.isnot(None))
+        .all()
+    )
+
+    messages = await gmail_service.list_messages(query="in:inbox", max_results=10)
+
+    todo = [m["id"] for m in messages if m["id"] not in existing_ids]
+    if not todo:
+        return
+
+    async def _process(message_id: str) -> bool:
+        try:
+            raw_message, parsed = await gmail_service.fetch_and_parse(message_id)
+            results = engine.analyze(parsed)
+            thread_id = raw_message.get("threadId")
+
+            _store_gmail_analysis(
+                parsed, results, db, message_id, thread_id,
+                raw_message=raw_message,
+                owner_account=account,
+            )
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Polling: failed to process %s: %s", message_id[:12], type(e).__name__)
+            return False
+
+    semaphore = asyncio.Semaphore(GMAIL_FETCH_CONCURRENCY)
+
+    async def _bounded(mid: str) -> bool:
+        async with semaphore:
+            return await _process(mid)
+
+    # F-30: bounded concurrent fetches + one shared connection pool.
+    gmail_service.use_shared_client()
+    try:
+        await asyncio.gather(*(_bounded(mid) for mid in todo))
+    finally:
+        await gmail_service.aclose()
 
 
 @router.get("/message-content/{analysis_id}")
@@ -400,6 +470,11 @@ async def get_gmail_message_content(
 
     analysis = db.query(EmailAnalysis).filter(EmailAnalysis.id == analysis_id).first()
     if not analysis or analysis.source != "gmail":
+        raise HTTPException(status_code=404, detail="Email analysis not found")
+
+    # F-16: an account may only fetch message content for its OWN analyses.
+    from ..auth.account_context import owns_row
+    if not owns_row(analysis, user_email):
         raise HTTPException(status_code=404, detail="Email analysis not found")
 
     # Already have the body (e.g. newly synced email) — nothing to fetch.
@@ -456,7 +531,13 @@ async def get_gmail_message_content(
 
 @router.post("/start-polling")
 async def start_polling(request: Request):
-    """Start background Gmail polling."""
+    """Start background Gmail polling (F-23).
+
+    Requires an authenticated Gmail session; refuses to start without one
+    (polling exists only to serve connected accounts). Idempotent: a second
+    start while a poller is running returns 'already_polling' instead of
+    creating a duplicate poller.
+    """
     global _polling_task, _polling_active
 
     session_id = request.cookies.get("phishguard_session")
@@ -467,16 +548,42 @@ async def start_polling(request: Request):
     if not user_email:
         raise HTTPException(status_code=401, detail="Invalid session")
 
+    # The caller must actually BE a connected account (token row exists).
+    db = SessionLocal()
+    try:
+        has_token = db.query(GmailToken).filter(
+            GmailToken.user_email == user_email).first() is not None
+    finally:
+        db.close()
+    if not has_token:
+        raise HTTPException(status_code=409, detail="Connect a Gmail account before starting polling")
+
+    # F-23: never create duplicate concurrent pollers.
     if _polling_task and not _polling_task.done():
         return {"status": "already_polling"}
 
     _polling_task = asyncio.create_task(_poll_gmail_background())
-    return {"status": "started"}
+    return {"status": "started", "account": user_email}
 
 
 @router.post("/stop-polling")
-async def stop_polling():
-    """Stop background Gmail polling."""
+async def stop_polling(request: Request):
+    """Stop background Gmail polling (F-23).
+
+    Stop is authorized: it requires the same authenticated session as start.
+    The running worker checks `_polling_active` after every await, so the
+    flag reliably terminates the current poller's loop.
+    """
     global _polling_active
+
+    session_id = request.cookies.get("phishguard_session")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Not connected to Gmail")
+
+    user_email = get_session_user(session_id)
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
     _polling_active = False
-    return {"status": "stopped"}
+    stopped = bool(_polling_task and not _polling_task.done())
+    return {"status": "stopped", "was_running": stopped, "account": user_email}

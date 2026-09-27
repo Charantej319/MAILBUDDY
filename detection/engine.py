@@ -14,7 +14,7 @@ from .content_analyzer import ContentAnalyzer
 from .header_analyzer import HeaderAnalyzer
 from .attachment_analyzer import AttachmentAnalyzer
 from .scoring import RiskScorer, Finding
-from .rules import Category, Severity
+from .rules import Category, Severity, is_risky_level
 from .intelligence.domain_intelligence import DomainIntelligence
 
 
@@ -69,7 +69,14 @@ class DetectionEngine:
                 pass
 
         # 3. URL Analysis
-        url_findings = self.url_analyzer.analyze(parsed_email.urls)
+        # The URL analyzer consumes the href URLs and the visible anchor
+        # text (sanitised, never rendered) so it can compare visible link
+        # text with the real href.
+        url_findings = self.url_analyzer.analyze(
+            parsed_email.urls,
+            anchor_text=getattr(parsed_email, 'anchor_text', ''),
+            anchors=getattr(parsed_email, 'anchors', None),
+        )
         all_findings.extend(url_findings)
 
         # 4. Content Analysis
@@ -109,8 +116,10 @@ class DetectionEngine:
                 if f.rule_id != "SENDER_FREEMAIL_AUTHORITY"
             ]
 
-        # 7. Cross-signal correlation
-        correlation_findings = self._correlate_signals(all_findings, parsed_email)
+        # 7. Cross-signal correlation (F-10: may neutralize duplicate
+        #    content-level combination findings; _correlate_signals returns
+        #    both the correlation findings and the pruned originals).
+        correlation_findings, all_findings = self._correlate_signals(all_findings, parsed_email)
         all_findings.extend(correlation_findings)
 
         # 8. Calculate final score with confidence
@@ -152,10 +161,14 @@ class DetectionEngine:
             "summary": self._build_summary(classification, findings_list, confidence_level),
         }
 
-    def _correlate_signals(self, findings: list[Finding], parsed_email) -> list[Finding]:
+    def _correlate_signals(self, findings: list[Finding], parsed_email):
         """
         Cross-signal correlation engine.
         Detects combinations of findings that together indicate higher risk.
+
+        F-10: returns (correlation_findings, pruned_findings) — when a
+        correlation layer owns a combination, the duplicate content-level
+        combo finding is replaced by a zero-point authoritative marker.
         """
         correlation_findings = []
 
@@ -224,6 +237,38 @@ class DetectionEngine:
                 ),
                 source="Cross-signal correlation",
             ))
+
+            # F-10: ONE layer owns the urgency+credential combination bonus.
+            # The CORRELATION finding above (+10) is the authoritative scoring
+            # event; the content-level CONTENT_URGENCY_CREDENTIAL_COMBO (+5)
+            # describes the same underlying condition and is neutralized to a
+            # zero-point evidence marker so the pattern can never be paid
+            # twice (content +5 AND engine +10). The content finding stays in
+            # the output for explainability, and the base URGENCY and
+            # CREDENTIAL findings are untouched.
+            correlation_findings.append(Finding(
+                rule_id="CONTENT_URGENCY_CREDENTIAL_COMBO",
+                category=Category.CONTENT,
+                severity=Severity.LOW.value,
+                points=0,
+                message=(
+                    "Urgency + credential combination accounted for by "
+                    "CORR_URGENCY_CREDENTIAL (no double counting)."
+                ),
+                evidence="Content-level duplicate of the correlation bonus",
+                explanation=(
+                    "The urgency + credential combination is scored once, by the "
+                    "cross-signal correlation layer. This marker replaces the "
+                    "content-level bonus so the same evidence is never paid "
+                    "two combination bonuses."
+                ),
+                source="Cross-signal correlation",
+                dedup_key="corr_urgency_credential",
+            ))
+            # Drop the original content-level combo finding (it fired with
+            # points; the zero-point authoritative marker replaces it).
+            findings = [f for f in findings
+                        if f.rule_id != "CONTENT_URGENCY_CREDENTIAL_COMBO"]
 
         # Sender domain mismatch + auth failure + credential request
         if (has_sender and has_header and has_credential and
@@ -304,7 +349,7 @@ class DetectionEngine:
                     source="Cross-signal correlation",
                 ))
 
-        return correlation_findings
+        return correlation_findings, findings
 
     def _get_top_findings(self, findings: list[dict]) -> list[dict]:
         """Get the top 5 strongest findings sorted by severity and points."""
@@ -327,7 +372,7 @@ class DetectionEngine:
         has_sender_issues = any(f['rule_id'].startswith('SENDER_') for f in findings)
         has_brand_impersonation = 'INTEL_BRAND_IMPERSONATION' in rule_ids or 'SENDER_BRAND_IMPERSONATION' in rule_ids
 
-        if classification in ("HIGH RISK", "SUSPICIOUS"):
+        if is_risky_level(classification):
             actions.append("Do not click any links in this email.")
             actions.append("Do not download or open any attachments.")
 

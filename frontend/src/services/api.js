@@ -1,9 +1,51 @@
 /**
  * PhishGuard API Service
  * All communication with the backend API.
+ *
+ * Security: every /api request carries the local bearer token in the
+ * Authorization header. The token is delivered to the renderer ONCE by the
+ * Electron main process over IPC (see preload.js) and lives only in this
+ * module's memory — never in localStorage, never in a URL, never logged.
+ * In browser dev mode (no Electron) the token can be set via setApiToken().
  */
 
 const API_BASE = '/api';
+
+// In-memory bearer token (Electron IPC / dev bootstrap). Never persisted.
+let _apiToken = null;
+
+/** Store the local API token (called once at startup from main.jsx). */
+export function setApiToken(token) {
+  if (typeof token === 'string' && token.length > 0) {
+    _apiToken = token;
+  }
+}
+
+/** Internal: fetch with the Authorization header attached for /api calls.
+ *
+ * If the backend rejects our token with 401 (e.g. the backend restarted and
+ * rotated the token), re-pull the token over Electron IPC once and retry.
+ */
+async function apiFetch(url, options = {}, _retried = false) {
+  const headers = new Headers(options.headers || {});
+  if (_apiToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${_apiToken}`);
+  }
+  const response = await fetch(url, { ...options, headers });
+  if (
+    response.status === 401 &&
+    !_retried &&
+    typeof window !== 'undefined' &&
+    window.electronAPI?.getApiToken
+  ) {
+    const fresh = await window.electronAPI.getApiToken();
+    if (typeof fresh === 'string' && fresh.length > 0 && fresh !== _apiToken) {
+      setApiToken(fresh);
+      return apiFetch(url, options, true);
+    }
+  }
+  return response;
+}
 
 // Human-readable messages for OAuth error codes returned by the backend
 // via /settings?error=<code> after the Google OAuth callback.
@@ -28,7 +70,7 @@ class ApiService {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE}/analyze/eml`, {
+    const response = await apiFetch(`${API_BASE}/analyze/eml`, {
       method: 'POST',
       body: formData,
     });
@@ -42,13 +84,13 @@ class ApiService {
   }
 
   async getEmails(skip = 0, limit = 100) {
-    const response = await fetch(`${API_BASE}/emails?skip=${skip}&limit=${limit}`);
+    const response = await apiFetch(`${API_BASE}/emails?skip=${skip}&limit=${limit}`);
     if (!response.ok) throw new Error('Failed to fetch emails');
     return response.json();
   }
 
   async getEmailAnalysis(id) {
-    const response = await fetch(`${API_BASE}/emails/${id}`);
+    const response = await apiFetch(`${API_BASE}/emails/${id}`);
     if (!response.ok) {
       if (response.status === 404) throw new Error('Unable to load email. This analysis no longer exists.');
       throw new Error('Unable to load email. Please try again.');
@@ -57,13 +99,13 @@ class ApiService {
   }
 
   async getStatistics() {
-    const response = await fetch(`${API_BASE}/statistics`);
+    const response = await apiFetch(`${API_BASE}/statistics`);
     if (!response.ok) throw new Error('Failed to fetch statistics');
     return response.json();
   }
 
   async deleteEmail(id) {
-    const response = await fetch(`${API_BASE}/emails/${id}`, { method: 'DELETE' });
+    const response = await apiFetch(`${API_BASE}/emails/${id}`, { method: 'DELETE' });
     if (!response.ok) throw new Error('Failed to delete analysis');
     return response.json();
   }
@@ -71,7 +113,7 @@ class ApiService {
   // ── Gmail Integration ──
 
   async getGmailStatus() {
-    const response = await fetch(`${API_BASE}/gmail/status`, {
+    const response = await apiFetch(`${API_BASE}/gmail/status`, {
       credentials: 'include',
     });
     if (!response.ok) return { connected: false, email: null, last_sync: null };
@@ -81,13 +123,13 @@ class ApiService {
   // ── AI Verification (optional second opinion) ──
 
   async getAIStatus() {
-    const response = await fetch(`${API_BASE}/ai/status`);
+    const response = await apiFetch(`${API_BASE}/ai/status`);
     if (!response.ok) return { configured: false, model: null };
     return response.json();
   }
 
   async verifyWithAI(analysisId) {
-    const response = await fetch(`${API_BASE}/ai/verify/${analysisId}`, {
+    const response = await apiFetch(`${API_BASE}/ai/verify/${analysisId}`, {
       method: 'POST',
     });
     if (!response.ok) {
@@ -98,7 +140,7 @@ class ApiService {
   }
 
   async syncGmail(maxResults = 50) {
-    const response = await fetch(`${API_BASE}/gmail/sync?max_results=${maxResults}`, {
+    const response = await apiFetch(`${API_BASE}/gmail/sync?max_results=${maxResults}`, {
       method: 'POST',
       credentials: 'include',
     });
@@ -110,7 +152,7 @@ class ApiService {
   }
 
   async analyzeGmailMessage(messageId) {
-    const response = await fetch(`${API_BASE}/gmail/analyze-single?message_id=${messageId}`, {
+    const response = await apiFetch(`${API_BASE}/gmail/analyze-single?message_id=${messageId}`, {
       method: 'POST',
       credentials: 'include',
     });
@@ -128,7 +170,7 @@ class ApiService {
    * { available: false, message } when Gmail is unavailable.
    */
   async getGmailMessageContent(analysisId) {
-    const response = await fetch(`${API_BASE}/gmail/message-content/${analysisId}`, {
+    const response = await apiFetch(`${API_BASE}/gmail/message-content/${analysisId}`, {
       credentials: 'include',
     });
     if (response.status === 401) {
@@ -144,7 +186,7 @@ class ApiService {
   }
 
   async startGmailPolling() {
-    const response = await fetch(`${API_BASE}/gmail/start-polling`, {
+    const response = await apiFetch(`${API_BASE}/gmail/start-polling`, {
       method: 'POST',
       credentials: 'include',
     });
@@ -152,8 +194,9 @@ class ApiService {
   }
 
   async stopGmailPolling() {
-    const response = await fetch(`${API_BASE}/gmail/stop-polling`, {
+    const response = await apiFetch(`${API_BASE}/gmail/stop-polling`, {
       method: 'POST',
+      credentials: 'include',
     });
     return response.json();
   }
@@ -191,13 +234,13 @@ class ApiService {
   // ── MailBuddy ──
 
   async getMailBuddySettings() {
-    const response = await fetch(`${API_BASE}/mailbuddy/settings`);
+    const response = await apiFetch(`${API_BASE}/mailbuddy/settings`);
     if (!response.ok) throw new Error('Failed to fetch MailBuddy settings');
     return response.json();
   }
 
   async updateMailBuddySettings(patch) {
-    const response = await fetch(`${API_BASE}/mailbuddy/settings`, {
+    const response = await apiFetch(`${API_BASE}/mailbuddy/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
@@ -207,7 +250,7 @@ class ApiService {
   }
 
   async getPrioritySummary() {
-    const response = await fetch(`${API_BASE}/mailbuddy/priority/summary`);
+    const response = await apiFetch(`${API_BASE}/mailbuddy/priority/summary`);
     if (!response.ok) throw new Error('Failed to fetch priority summary');
     return response.json();
   }
@@ -216,13 +259,13 @@ class ApiService {
     const params = new URLSearchParams();
     if (level) params.set('level', level);
     if (category) params.set('category', category);
-    const response = await fetch(`${API_BASE}/mailbuddy/priority/emails?${params}`);
+    const response = await apiFetch(`${API_BASE}/mailbuddy/priority/emails?${params}`);
     if (!response.ok) throw new Error('Failed to fetch priority emails');
     return response.json();
   }
 
   async analyzeBatchPriorities(limit = 10) {
-    const response = await fetch(`${API_BASE}/mailbuddy/priority/analyze-batch`, {
+    const response = await apiFetch(`${API_BASE}/mailbuddy/priority/analyze-batch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ limit }),
@@ -232,7 +275,7 @@ class ApiService {
   }
 
   async askMailBuddy(question, emailId = null) {
-    const response = await fetch(`${API_BASE}/mailbuddy/assistant/chat`, {
+    const response = await apiFetch(`${API_BASE}/mailbuddy/assistant/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question, email_id: emailId }),
@@ -246,7 +289,7 @@ class ApiService {
   }
 
   async clearAssistantChat() {
-    const response = await fetch(`${API_BASE}/mailbuddy/assistant/clear`, {
+    const response = await apiFetch(`${API_BASE}/mailbuddy/assistant/clear`, {
       method: 'POST',
     });
     if (!response.ok) throw new Error('Failed to clear chat');
@@ -254,13 +297,13 @@ class ApiService {
   }
 
   async getPendingNotifications() {
-    const response = await fetch(`${API_BASE}/mailbuddy/notifications/pending`);
+    const response = await apiFetch(`${API_BASE}/mailbuddy/notifications/pending`);
     if (!response.ok) return { enabled: false, notifications: [] };
     return response.json();
   }
 
   async acknowledgeNotifications(keys) {
-    const response = await fetch(`${API_BASE}/mailbuddy/notifications/ack`, {
+    const response = await apiFetch(`${API_BASE}/mailbuddy/notifications/ack`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keys }),

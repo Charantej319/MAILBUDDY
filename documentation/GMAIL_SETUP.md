@@ -136,11 +136,12 @@ GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
 ## Security Notes
 
 - PhishGuard uses **read-only** Gmail access (`gmail.readonly` scope)
-- OAuth tokens are stored **server-side** in the SQLite database
-- Tokens are **never** exposed to the React frontend
+- OAuth tokens are stored **server-side**, **encrypted at rest** (Windows DPAPI in the packaged desktop app; Fernet with a `0600` key file on other platforms)
+- Tokens are **never** exposed to the React frontend and never appear in logs
+- Disconnecting an account revokes the Google grant and deletes the local token row
 - PhishGuard never sends, deletes, modifies, or replies to emails
-- URLs in emails are analyzed statically — they are never visited
-- Attachments are never opened or executed
+- Email URLs are analyzed statically — they are never visited over HTTP (bounded DNS MX lookups only)
+- Attachments are never downloaded, opened, or executed (metadata only)
 
 ---
 
@@ -149,8 +150,7 @@ GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
 For production deployment:
 
 1. **HTTPS**: Google requires HTTPS for OAuth redirect URIs in production
-2. **Token storage**: Replace SQLite with a production database (PostgreSQL)
-3. **Token encryption**: Encrypt stored tokens at rest
-4. **App verification**: Complete Google's app verification for public use
-5. **Rate limiting**: Implement rate limiting for Gmail API calls
-6. **Webhook**: Consider using Gmail push notifications (Pub/Sub) instead of polling for real-time analysis
+2. **Token storage**: Replace SQLite with a production database (PostgreSQL) and centralized secret management
+3. **App verification**: Complete Google's app verification for public use
+4. **Rate limiting**: Implement rate limiting for Gmail API calls
+5. **Webhook**: Consider using Gmail push notifications (Pub/Sub) instead of polling for real-time analysis

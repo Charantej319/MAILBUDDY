@@ -35,6 +35,7 @@ class ParsedEmail:
     
     # Extracted content
     urls: list = field(default_factory=list)
+    anchors: list = field(default_factory=list)  # [(href, visible_text), ...]
     attachments: list = field(default_factory=list)
     
     # Authentication results
@@ -61,6 +62,81 @@ class URLExtractor(HTMLParser):
             for attr, value in attrs:
                 if attr == 'href' and value and value.startswith(('http://', 'https://')):
                     self.urls.append(value)
+
+
+class AnchorExtractor(HTMLParser):
+    """Extract (href, visible_text) pairs from <a> elements.
+
+    F-3: the visible anchor text is captured from the HTML source itself —
+    it is NEVER inferred from the href. Nested formatting tags inside the
+    anchor (<a><b>text</b></a>) are flattened into the visible text, HTML
+    entities in both the href and the text are decoded (convert_charrefs=True
+    plus html.parser's built-in attribute unescaping), and whitespace is
+    collapsed.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.anchors: list[tuple[str, str]] = []
+        self._href: str | None = None
+        self._chunks: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'a' and self._href is None:  # ignore invalid nested <a>
+            self._href = dict(attrs).get('href') or ''
+            self._chunks = []
+
+    def handle_endtag(self, tag):
+        if tag == 'a' and self._href is not None:
+            text = re.sub(r'\s+', ' ', ' '.join(self._chunks)).strip()
+            self.anchors.append((self._href.strip(), text))
+            self._href = None
+            self._chunks = []
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._chunks.append(data)
+
+
+def extract_anchors_from_html(html: str) -> list[tuple[str, str]]:
+    """Extract (href, visible_text) pairs from anchor tags in HTML content.
+
+    Never raises: malformed HTML yields whatever anchors parsed cleanly.
+    """
+    if not html:
+        return []
+    extractor = AnchorExtractor()
+    try:
+        extractor.feed(html)
+    except Exception:
+        pass
+    return extractor.anchors
+
+
+# Valid RFC 5451 / RFC 7208 authentication verdicts (F-5).
+AUTH_STATES = ("pass", "fail", "softfail", "neutral", "none",
+               "temperror", "permerror")
+
+
+def normalize_auth_result(header: str) -> dict:
+    """Normalize an Authentication-Results header into distinct SPF/DKIM/DMARC
+    verdicts.
+
+    Each mechanism is extracted and normalized SEPARATELY so states are never
+    collapsed into each other: spf=softfail stays 'softfail', dkim=none stays
+    'none', dmarc=none stays 'none'. Malformed or vendor-extended tokens map
+    to 'unknown' instead of being coerced into fail/pass.
+    """
+    result = {"spf": "unknown", "dkim": "unknown", "dmarc": "unknown"}
+    if not header:
+        return result
+    auth_lower = str(header).lower()
+    for mech in ("spf", "dkim", "dmarc"):
+        match = re.search(rf'\b{mech}\s*=\s*([a-z]+)', auth_lower)
+        if match:
+            value = match.group(1)
+            result[mech] = value if value in AUTH_STATES else "unknown"
+    return result
 
 
 def extract_urls_from_text(text: str) -> list[str]:
@@ -130,26 +206,17 @@ def parse_eml_content(eml_content: str | bytes) -> ParsedEmail:
             else:
                 parsed.headers[header] = [str(v) for v in values]
     
-    # Parse authentication results
+    # Parse authentication results (RFC 5451).
+    #
+    # F-5: SPF, DKIM and DMARC are normalized SEPARATELY via a shared
+    # regex-based extractor; distinct verdicts (fail / softfail / neutral /
+    # none / temperror / permerror / unknown) are preserved — never
+    # collapsed into fail or none.
     auth_results = msg.get('Authentication-Results', '')
-    if auth_results:
-        auth_lower = auth_results.lower()
-        if 'spf=fail' in auth_lower or 'spf=softfail' in auth_lower:
-            parsed.spf_result = 'fail'
-        elif 'spf=pass' in auth_lower:
-            parsed.spf_result = 'pass'
-        elif 'spf=none' in auth_lower:
-            parsed.spf_result = 'none'
-        
-        if 'dkim=fail' in auth_lower or 'dkim=none' in auth_lower:
-            parsed.dkim_result = 'fail' if 'dkim=fail' in auth_lower else 'none'
-        elif 'dkim=pass' in auth_lower:
-            parsed.dkim_result = 'pass'
-        
-        if 'dmarc=fail' in auth_lower or 'dmarc=none' in auth_lower:
-            parsed.dmarc_result = 'fail' if 'dmarc=fail' in auth_lower else 'none'
-        elif 'dmarc=pass' in auth_lower:
-            parsed.dmarc_result = 'pass'
+    normalized = normalize_auth_result(str(auth_results))
+    parsed.spf_result = normalized["spf"]
+    parsed.dkim_result = normalized["dkim"]
+    parsed.dmarc_result = normalized["dmarc"]
     
     # Store Received headers
     received = msg.get_all('Received', [])
@@ -224,7 +291,21 @@ def parse_eml_content(eml_content: str | bytes) -> ParsedEmail:
     urls_from_text = extract_urls_from_text(body_text)
     urls_from_html = extract_urls_from_html(body_html) if body_html else []
     parsed.urls = list(set(urls_from_text + urls_from_html))
-    
+
+    # F-3: extract (href, visible_text) anchor pairs straight from the HTML
+    # so the URL analyzer can compare the DISPLAYED link against the real
+    # destination. Visible text is taken from the source, never inferred.
+    parsed.anchors = extract_anchors_from_html(body_html) if body_html else []
+
+    # Preserve anchor text for the URL analyzer's visible-link check.
+    # html.parser never renders clickable links, so this value is safe to
+    # expose as the visible text of the email body.
+    try:
+        from ..utils.html_sanitizer import sanitize_email_html
+        parsed.anchor_text = sanitize_email_html(body_html)
+    except Exception:
+        parsed.anchor_text = body_text or ""
+
     return parsed
 
 
@@ -261,13 +342,11 @@ def parse_gmail_message(message: dict) -> ParsedEmail:
     for key, value in headers.items():
         parsed.headers[key] = value
     
-    # Parse authentication
-    auth_results = headers.get('Authentication-Results', '')
-    if auth_results:
-        auth_lower = auth_results.lower()
-        parsed.spf_result = 'fail' if 'spf=fail' in auth_lower or 'spf=softfail' in auth_lower else ('pass' if 'spf=pass' in auth_lower else 'none')
-        parsed.dkim_result = 'fail' if 'dkim=fail' in auth_lower else ('none' if 'dkim=none' in auth_lower else ('pass' if 'dkim=pass' in auth_lower else ''))
-        parsed.dmarc_result = 'fail' if 'dmarc=fail' in auth_lower else ('none' if 'dmarc=none' in auth_lower else ('pass' if 'dmarc=pass' in auth_lower else ''))
+    # Parse authentication (RFC 5451) — shared normalizer, distinct states.
+    normalized = normalize_auth_result(headers.get('Authentication-Results', ''))
+    parsed.spf_result = normalized["spf"]
+    parsed.dkim_result = normalized["dkim"]
+    parsed.dmarc_result = normalized["dmarc"]
     
     # Extract body and attachment metadata from Gmail payload
     def extract_parts(payload):
@@ -285,17 +364,23 @@ def parse_gmail_message(message: dict) -> ParsedEmail:
                 'size': int(body.get('size') or 0),
                 'disposition': 'attachment',
             })
+        elif body_data and filename:
+            # F-30: attachment part WITH inline data. Gmail's body.size already
+            # carries the decoded byte size, so the payload is NOT decoded here —
+            # decoding a multi-MB base64 blob only to compute its length wasted
+            # CPU and memory on every sync. Attachments are metadata-only by
+            # design (SECURITY.md: never opened/executed); the detection
+            # engine consumes only filename/type/size.
+            attachments.append({
+                'filename': filename,
+                'content_type': mime_type or 'application/octet-stream',
+                'size': int(body.get('size') or 0),
+                'disposition': 'attachment',
+            })
         elif body_data:
             import base64
             decoded = base64.urlsafe_b64decode(body_data + '==').decode('utf-8', errors='replace')
-            if filename:
-                attachments.append({
-                    'filename': filename,
-                    'content_type': mime_type or 'application/octet-stream',
-                    'size': int(body.get('size') or len(decoded)),
-                    'disposition': 'attachment',
-                })
-            elif mime_type == 'text/plain' and not body_text:
+            if mime_type == 'text/plain' and not body_text:
                 body_text = decoded
             elif mime_type == 'text/html' and not body_html:
                 body_html = decoded
@@ -319,5 +404,8 @@ def parse_gmail_message(message: dict) -> ParsedEmail:
     urls_from_text = extract_urls_from_text(body_text)
     urls_from_html = extract_urls_from_html(body_html) if body_html else []
     parsed.urls = list(set(urls_from_text + urls_from_html))
+
+    # F-3: anchor pairs for the visible-link check (Gmail HTML bodies).
+    parsed.anchors = extract_anchors_from_html(body_html) if body_html else []
     
     return parsed

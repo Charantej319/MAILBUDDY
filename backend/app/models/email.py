@@ -7,11 +7,25 @@ timezone-aware ISO-8601 strings (see app.utils.timeutil) so the frontend
 can render them correctly in the user's local timezone.
 """
 
-from sqlalchemy import Column, String, Integer, DateTime, Text, Float, Boolean
+from sqlalchemy import Column, String, Integer, DateTime, Text, Float, Boolean, LargeBinary
 import uuid
 
 from ..database.connection import Base
 from ..utils.timeutil import iso_utc
+
+
+class ApiToken(Base):
+    """Local API bearer token, stored as a SHA-256 digest only.
+
+    The plaintext token never touches the database: TokenManager writes the
+    digest here at bootstrap/validation time and keeps the plaintext in
+    process memory (plus the 0600 api.token bootstrap file for Electron).
+    """
+    __tablename__ = "api_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token_digest = Column(String(64), nullable=False, unique=True)  # hex SHA-256
+    created_at = Column(DateTime, server_default=__import__("sqlalchemy").text("CURRENT_TIMESTAMP"))
 
 
 class AppSetting(Base):
@@ -73,6 +87,13 @@ class EmailAnalysis(Base):
     email_id = Column(String, unique=True, nullable=True)  # Gmail message ID or generated
     thread_id = Column(String, nullable=True)  # Gmail thread ID
     source = Column(String, nullable=False, default="eml")  # "gmail", "eml" or "raw"
+
+    # F-16 account isolation: the authenticated account this analysis belongs
+    # to (the Gmail address from the server-side OAuth session, or the
+    # poller's account). NULL = legacy row from before isolation was
+    # introduced (single-user desktop data dir: visible to any authenticated
+    # caller, never to unauthenticated ones).
+    owner_account = Column(String, nullable=True, index=True)
 
     # Email metadata
     sender = Column(String, nullable=False)
@@ -137,12 +158,18 @@ class EmailAnalysis(Base):
             return default
 
     def to_dict(self):
-        """Convert to dictionary for JSON serialization (timezone-aware UTC)."""
+        """Convert to dictionary for JSON serialization (timezone-aware UTC).
+
+        F-19: FULL representation — includes body_text/body_html. ONLY the
+        detail/investigation endpoint may use this. Any list-style response
+        must use to_summary_dict() instead.
+        """
         return {
             "id": self.id,
             "email_id": self.email_id,
             "thread_id": self.thread_id,
             "source": self.source,
+            "owner_account": self.owner_account,
             "sender": self.sender,
             "sender_email": self.sender_email,
             "sender_domain": self.sender_domain,
@@ -167,6 +194,20 @@ class EmailAnalysis(Base):
             "analyzed_at": iso_utc(self.analyzed_at),
             "created_at": iso_utc(self.created_at),
         }
+
+    def to_summary_dict(self):
+        """F-19: LIST/SUMMARY representation — everything the inbox,
+        dashboard, priority and security pages need, WITHOUT the email body.
+
+        body_text/body_html are excluded here by construction so list
+        endpoints can never leak message content; the body is available only
+        through the detail endpoint (GET /api/emails/{id}, to_dict()) and the
+        Gmail on-demand content path.
+        """
+        data = self.to_dict()
+        data.pop("body_text", None)
+        data.pop("body_html", None)
+        return data
 
     def priority_to_dict(self):
         """MailBuddy priority block. Null level means 'not analyzed yet'."""

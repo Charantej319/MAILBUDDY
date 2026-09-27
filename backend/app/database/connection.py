@@ -34,6 +34,7 @@ def init_db():
     # Import model modules first so every table is registered on
     # Base.metadata regardless of the caller's import order.
     from ..models.email import EmailAnalysis, GmailToken  # noqa: F401
+    from ..models.email import ApiToken  # noqa: F401  (local API bearer token digests)
     from ..auth.sessions import OAuthSession, OAuthState  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
@@ -60,6 +61,9 @@ _MIGRATION_DEFAULTS = {
         "ai_recommended_action": "VARCHAR",
         "ai_model": "VARCHAR",
         "ai_analyzed_at": "DATETIME",
+        # F-16 account isolation: owner of the analyzed email (authenticated
+        # account identity). NULL = pre-isolation legacy row.
+        "owner_account": "VARCHAR",
     },
 }
 

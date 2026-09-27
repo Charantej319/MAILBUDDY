@@ -6,35 +6,43 @@ PhishGuard includes unit tests for individual detection rules and an evaluation 
 
 ## Running Tests
 
-### Unit Tests
+### Everything in one command
 
-Run all unit tests:
+Backend pytest, the frontend production build, frontend auth unit tests and
+the Electron/Node tests:
 ```bash
-cd phishingdetectionapp
-python -m pytest tests/ -v
+python scripts/run_all_tests.py          # add --quick to skip build + Electron
 ```
 
-Run individual test files:
+### Backend Unit Tests
+
+Run the whole backend suite (450+ tests — detection rules, security
+regressions, OAuth, account isolation, notifications, ingestion performance):
 ```bash
-python tests/test_sender.py
-python tests/test_urls.py
-python tests/test_content.py
-python tests/test_headers.py
-python tests/test_attachments.py
-python tests/test_scoring.py
+python -m pytest tests/ -q
 ```
 
-### Test Coverage
+The suite runs fully offline: no live Gmail, no live DNS lookups, no Groq API
+and no Google OAuth are required. AI/Groq environment variables are stripped
+before every test (see `tests/conftest.py`), and the suite fails if the
+developer's real `backend/phishguard.db` is ever touched.
 
-| Test File | Tests | What It Tests |
-|-----------|-------|---------------|
-| test_sender.py | 7 | Sender/domain analysis rules |
-| test_urls.py | 12 | URL analysis rules |
-| test_content.py | 8 | Content analysis rules |
-| test_headers.py | 7 | Header analysis rules |
-| test_attachments.py | 8 | Attachment analysis rules |
-| test_scoring.py | 9 | Risk scoring and classification |
-| **Total** | **51** | |
+### Test Coverage (primary suites)
+
+Run `python -m pytest tests/ --collect-only -q` for the live count. The main
+suites beyond the original detection-rule tests:
+
+| Suite | What It Tests |
+|-------|---------------|
+| test_sender.py / test_urls.py / test_content.py / test_headers.py / test_attachments.py | Detection-rule behavior per analyzer |
+| test_scoring.py / test_session4_repair.py | Scoring, caps, classification, auth floor |
+| test_security_repair.py / test_url_auth_repair.py / test_detection_fp_repair.py | Security and false-positive regression repairs |
+| test_oauth_callback.py | OAuth flow incl. allowlisted redirect origin |
+| test_mailbuddy.py | Priority, assistant, notifications, account isolation |
+| test_notification_burst.py | F-28 bounded per-account notification policy |
+| test_gmail_ingest_perf.py | F-30 bounded concurrent ingestion, attachment metadata |
+| test_email_detail.py / test_email_content_fetch.py | Detail API body-exposure guarantees |
+| test_render_safety.py | Sanitization / XSS regression guards |
 
 ### Test Cases
 

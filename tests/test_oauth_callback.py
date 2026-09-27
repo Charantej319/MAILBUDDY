@@ -121,8 +121,10 @@ def test_callback_success_desktop_same_origin(client, monkeypatch):
     assert r.status_code in (302, 307)
     loc = r.headers["location"]
     assert ":5173" not in loc, f"desktop redirect must never target the dev server: {loc}"
-    assert loc in ("http://testserver/settings?connected=true",
-                   "https://testserver/settings?connected=true"), loc
+    # Finding 18: the redirect resolves to the CONFIGURED local app origin,
+    # never to a request-controlled Host (the old behavior echoed 'testserver').
+    assert loc.startswith("http://localhost:8000/settings"), loc
+    assert "testserver" not in loc, f"request Host leaked into redirect: {loc}"
 
     # Session cookie issued on the callback response
     session_id = r.cookies.get("phishguard_session")
@@ -140,7 +142,9 @@ def test_callback_success_desktop_same_origin(client, monkeypatch):
         db.close()
 
     # Frontend verifies real connection status through the backend
-    status = client.get("/api/gmail/status", cookies={"phishguard_session": session_id}).json()
+    from tests.conftest import api_auth_headers
+    status = client.get("/api/gmail/status", cookies={"phishguard_session": session_id},
+                        headers=api_auth_headers()).json()
     assert status["connected"] is True
     assert status["email"] == TEST_EMAIL
 

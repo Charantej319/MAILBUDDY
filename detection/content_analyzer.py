@@ -5,7 +5,90 @@ Enhanced with full explainability.
 """
 
 import re
+import unicodedata
 from .rules import Finding, Severity, Category
+
+
+# F-12: zero-width / invisible formatting characters that are safe to remove
+# for security analysis. They are used to smuggle keywords past naive filters
+# ("pa\u200bssword") and carry no legitimate meaning in email bodies.
+_INVISIBLE_CHARS = (
+    "\u200b",  # zero-width space
+    "\u200c",  # zero-width non-joiner
+    "\u200d",  # zero-width joiner
+    "\u2060",  # word joiner
+    "\ufeff",  # BOM / zero-width no-break space
+    "\u00ad",  # soft hyphen
+    "\u180e",  # Mongolian vowel separator (legacy invisible)
+)
+
+# Common leet-substitutions for credential-vocabulary matching (F-12).
+# Bounded by design: only digits/symbols that visually substitute letters
+# inside words map back, so "passw0rd" matches while ordinary prose with
+# digits ("2024 report") is untouched.
+_LEET_FOLD = str.maketrans({
+    "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b",
+    "@": "a", "$": "s", "!": "i", "|": "l", "\u00a3": "l", "\u20ac": "e",
+})
+
+# F-12/F-11: request semantics — the de-obfuscation fallback only runs when
+# the message actually ASKS for something. Mere vocabulary mention ("password
+# policy was updated") never becomes a credential-request finding.
+_REQUEST_VERB_RE = re.compile(
+    r"\b(?:enter|provide|send|confirm|share|submit|give|reveal|supply|"
+    r"disclose|verify|validate|update)\b",
+    re.IGNORECASE,
+)
+
+
+def normalize_content(text: str) -> str:
+    """Produce the ANALYSIS representation of email content (F-12).
+
+    Pipeline (deterministic, bounded, non-destructive to the original):
+      1. Unicode NFKC normalization (full-width -> ASCII, ligatures split);
+      2. zero-width/invisible formatting characters removed;
+      3. whitespace collapsed (no other mutation).
+
+    The ORIGINAL text is preserved for evidence/display; analyzers run on
+    this normalized copy only.
+    """
+    if not text:
+        return ""
+    # 1. Unicode compatibility normalization.
+    normalized = unicodedata.normalize("NFKC", text)
+    # 2. Strip invisible formatting characters.
+    for ch in _INVISIBLE_CHARS:
+        normalized = normalized.replace(ch, "")
+    # 3. Collapse whitespace runs.
+    normalized = re.sub(r"[ \t\r\n\u00a0]+", " ", normalized)
+    return normalized.strip()
+
+
+def _credential_variants(token: str) -> set[str]:
+    """Analysis variants of one whitespace-separated token (F-12).
+
+    Returns the token itself plus bounded de-obfuscation variants:
+    - punctuation between letters removed ("p.a.s.s.w.o.r.d" -> "password");
+    - leet substitutions folded ("passw0rd" -> "password").
+    Only candidate tokens up to a sane keyword length are expanded, keeping
+    the cost deterministic and bounded.
+    """
+    variants = {token.lower()}
+    if len(token) > 24:
+        return variants  # bounded: not a plausible keyword carrier
+
+    # Punctuation/spacing injected between letters.
+    stripped = re.sub(r"[^a-z0-9]+", "", token.lower())
+    if stripped != token.lower():
+        variants.add(stripped)
+        # Also fold leet on the de-punctuated form ("p.a.s.s.w.0.r.d").
+        variants.add(stripped.translate(_LEET_FOLD))
+
+    # Direct leet fold ("passw0rd" -> "password").
+    leet = token.lower().translate(_LEET_FOLD)
+    if leet != token.lower():
+        variants.add(leet)
+    return variants
 
 
 # Pattern groups with weights
@@ -21,17 +104,42 @@ URGENCY_PATTERNS = [
 ]
 
 CREDENTIAL_PATTERNS = [
-    (r'\b(?:password|passwd|pwd)\b', 5),
-    (r'\b(?:one.?time.?password|otp)\b', 6),
-    (r'\b(?:verification code|verify(?:ing)? code)\b', 5),
-    (r'\b(?:pin(?:\s*code)?)\b', 5),
-    (r'\b(?:banking details|bank details|account number)\b', 6),
-    (r'\b(?:social security|ssn|aadhaar)\b', 7),
-    (r'\b(?:credit card|debit card|card number)\b', 6),
+    # Credential TYPE patterns — unambiguous sensitive-data vocabulary.
+    # Singular forms with optional plural 's'. An optional trailing 's' is
+    # appended after each keyword (or after the final word of a multi-word
+    # pattern) so singular and plural forms both match without duplicate
+    # rules.
+    #
+    # F-11: the bare "account" alternative was REMOVED. "account" alone is
+    # ordinary business language ("Your account dashboard has new features",
+    # "The account manager will present quarterly results") and produced a
+    # flood of CONTENT_CREDENTIAL_REQUEST false positives.
+    (r'\b(?:one.?time.?password|otp)s?\b', 6),
+    (r'\b(?:verification code|verify(?:ing)? code)s?\b', 5),
+    (r'\b(?:pin(?:\s*code)?)s?\b', 5),
+    (r'\b(?:banking details|bank details|account number|account numbers|account credentials)s?\b', 6),
+    (r'\b(?:social security|ssn|aadhaar)s?\b', 7),
+    (r'\b(?:credit card|debit card|card number)s?\b', 6),
     (r'\b(?:cvv|cvc|security code)\b', 6),
-    (r'\b(?:login credentials|login details)\b', 5),
-    (r'\b(?:enter your (?:password|credentials|login))\b', 6),
-    (r'\b(?:provide your (?:password|credentials))\b', 6),
+]
+
+# F-12/F-11: bare credential NOUNS — these words alone are ordinary prose
+# ("The password policy was updated", "the login page moved"). They only
+# indicate a credential REQUEST when paired with request/disclosure semantics
+# (checked via _REQUEST_VERB_RE plus these patterns). Compounds with explicit
+# sensitive-data semantics ("login details", "login credentials") stay in the
+# type list only when they cannot be read as ordinary nouns — "login details"
+# requested is covered by the context patterns below.
+BARE_NOUN_CREDENTIAL_PATTERNS = [
+    (r'\b(?:password|passwd|pwd)s?\b', 5),
+    (r'\b(?:credentials|sign.?in details)s?\b', 5),
+    (r'\b(?:login credentials|login details|login information)\b', 5),
+    # Context-required: "account"/"username" with a request verb.
+    (r'\b(?:enter|provide|send|confirm|share|submit|give|reveal)\s+(?:us\s+)?your\s+(?:account\s+)?(?:username|password|credentials|login)s?\b', 6),
+    (r'\b(?:enter|provide|send|confirm|share|submit|give|reveal)\s+(?:us\s+)?your\s+account\s+(?:password|details|information|number)s?\b', 6),
+    (r'\b(?:verify|validate)\s+your\s+account\s+(?:credentials|details|information)s?\b', 6),
+    (r'\b(?:username|user name)\s*(?:and|&|/)\s*password\b', 6),
+    (r'\b(?:enter|provide|send|confirm|share|submit|give|reveal)\s+(?:us\s+)?(?:your\s+)?login\b', 5),
 ]
 
 THREAT_PATTERNS = [
@@ -65,7 +173,8 @@ FINANCIAL_PATTERNS = [
     (r'\b(?:wire transfer|bank transfer)\b', 7),
     (r'\b(?:western union|moneygram)\b', 7),
     (r'\b(?:bitcoin|crypto(?:currency)?)\b', 5),
-    (r'\b(?:gift card|itunes card|google play card)\b', 6),
+    # Singular forms with optional plural 's'.
+    (r'\b(?:gift card|itunes card|google play card)s?\b', 6),
     (r'\b(?:send money|transfer funds)\b', 7),
     (r'\b(?:inheritance|beneficiary|next of kin)\b', 8),
     (r'\b(?:lottery|lotto|prize winner)\b', 8),
@@ -78,14 +187,23 @@ class ContentAnalyzer:
     def analyze(self, body_text: str, body_html: str = "") -> list[Finding]:
         """
         Analyze email content and return findings.
+
+        F-12: pattern matching runs on the NORMALIZED analysis representation
+        (NFKC + invisible-character removal + whitespace collapse, plus
+        bounded de-obfuscation variants for credential vocabulary). The
+        original text is preserved for evidence/display; URL and sender
+        analysis are entirely separate analyzers and are unaffected.
         """
         findings = []
 
+        # F-12: normalized analysis representation (original never mutated).
+        normalized_text = normalize_content(body_text)
+        normalized_html = normalize_content(re.sub(r'<[^>]+>', ' ', body_html)) if body_html else ""
+
         # Combine text and stripped HTML for analysis
-        combined_text = body_text.lower()
-        if body_html:
-            clean_html = re.sub(r'<[^>]+>', ' ', body_html).lower()
-            combined_text = combined_text + " " + clean_html
+        combined_text = normalized_text.lower()
+        if normalized_html:
+            combined_text = (combined_text + " " + normalized_html.lower()).strip()
 
         if not combined_text.strip():
             return findings
@@ -121,6 +239,22 @@ class ContentAnalyzer:
             ))
 
         # 2. Credential request patterns
+        #
+        # F-12 + F-11 semantics, two pattern tiers:
+        #   Tier 1 (CREDENTIAL_PATTERNS): unambiguous sensitive-data TYPES
+        #   (OTP, account number, credit card, CVV, SSN, banking details...) —
+        #   count whenever present.
+        #   Tier 2 (BARE_NOUN_CREDENTIAL_PATTERNS): bare credential nouns
+        #   ("password", "credentials") and request-verb context patterns —
+        #   only count when the message actually carries REQUEST semantics
+        #   (_REQUEST_VERB_RE). "The password policy was updated" stays benign;
+        #   "Please enter your password" is detected.
+        #   Pass 2 (only when both tiers found nothing AND a request verb is
+        #   present): bounded de-obfuscation — token variants (punctuation-
+        #   collapsed, leet-folded) and joined single-letter runs are matched
+        #   against the core credential vocabulary, so obfuscated requests
+        #   ("enter your p.a.s.s.w.o.r.d", "passw0rd", zero-width-split words)
+        #   stay detectable.
         credential_score = 0
         credential_evidence = []
         for pattern, weight in CREDENTIAL_PATTERNS:
@@ -130,6 +264,77 @@ class ContentAnalyzer:
                 credential_evidence.extend(matches[:2])
                 matched_groups.add("CREDENTIALS")
 
+        has_request_semantics = bool(_REQUEST_VERB_RE.search(combined_text))
+        if has_request_semantics:
+            for pattern, weight in BARE_NOUN_CREDENTIAL_PATTERNS:
+                matches = re.findall(pattern, combined_text, re.IGNORECASE)
+                if matches:
+                    credential_score += weight
+                    credential_evidence.extend(matches[:2])
+                    matched_groups.add("CREDENTIALS")
+
+        if credential_score == 0 and has_request_semantics:
+            core_vocab = (
+                "password", "passwd", "passw0rd", "otp", "username",
+                "credentials", "credential", "login", "logins",
+                "verification code", "one time password", "pin code",
+                "security code", "credit card", "banking details",
+                "social security", "cvv", "cvc",
+            )
+            tokens = combined_text.split()
+            for raw_token in tokens:
+                for variant in _credential_variants(raw_token):
+                    if variant in core_vocab:
+                        credential_score = 5
+                        credential_evidence.append(raw_token)
+                        matched_groups.add("CREDENTIALS")
+                        break
+                if credential_score:
+                    break
+
+            # F-12 (spaced-letter obfuscation): "p a s s w o r d" splits into
+            # single-letter tokens that no per-token variant can match. Join
+            # bounded runs of single-character tokens and re-check the
+            # vocabulary. A trailing token like "d." (letter + punctuation)
+            # is stripped of its punctuation so sentence-final runs match.
+            # Runs of 8+ single letters in ordinary prose are vanishingly
+            # rare, so this stays high-precision.
+            if credential_score == 0:
+                def _run_core(tokens_, start_):
+                    """Joined letters of the single-char run starting at start_."""
+                    j = start_
+                    parts = []
+                    while j < len(tokens_):
+                        tok = tokens_[j]
+                        if len(tok) == 1 and tok.isalpha():
+                            parts.append(tok)
+                        elif (
+                            len(tok) == 2 and tok[0].isalpha()
+                            and not tok[1].isalpha() and parts
+                        ):
+                            parts.append(tok[0])  # sentence-final "d."
+                            j += 1
+                            break
+                        else:
+                            break
+                        j += 1
+                    return "".join(parts), j
+
+                i = 0
+                n_tokens = len(tokens)
+                while i < n_tokens and not credential_score:
+                    if len(tokens[i]) == 1 and tokens[i].isalpha():
+                        joined, next_i = _run_core(tokens, i)
+                        for variant in _credential_variants(joined):
+                            if variant in core_vocab:
+                                credential_score = 5
+                                credential_evidence.append(" ".join(tokens[i:next_i]))
+                                matched_groups.add("CREDENTIALS")
+                                break
+                        i = next_i
+                    else:
+                        i += 1
+
         if credential_score > 0:
             credential_score = min(credential_score, 10)
             findings.append(Finding(
@@ -138,7 +343,7 @@ class ContentAnalyzer:
                 severity=Severity.HIGH.value if credential_score >= 5 else Severity.MEDIUM.value,
                 points=credential_score,
                 message="Email requests sensitive credential or personal information.",
-                evidence=f"Detected: {', '.join(set(credential_evidence))}",
+                evidence=f"Detected: {', '.join(sorted(set(credential_evidence)))}",
                 explanation=(
                     "The email asks for sensitive information such as passwords, OTPs, "
                     "PINs, or financial details. Legitimate organizations never request "

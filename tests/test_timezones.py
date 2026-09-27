@@ -163,7 +163,8 @@ def test_gmail_status_last_sync_is_tz_aware():
     db.commit()
     try:
         client = TestClient(app)
-        resp = client.get("/api/gmail/status")
+        from tests.conftest import api_auth_headers
+        resp = client.get("/api/gmail/status", headers=api_auth_headers())
         assert resp.status_code == 200
         data = resp.json()
         # Without a session cookie the endpoint reports not connected but the

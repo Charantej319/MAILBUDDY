@@ -8,7 +8,7 @@ import json
 import uuid
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -44,7 +44,9 @@ def _utcnow():
 from ..database.connection import get_db
 from ..models.email import EmailAnalysis
 from ..parser.email_parser import parse_eml_content
+from ..auth.account_context import resolve_account, scope_owner, owns_row
 from detection.engine import DetectionEngine
+from detection.rules import RiskLevel
 
 router = APIRouter()
 engine = DetectionEngine()
@@ -70,12 +72,19 @@ class AnalysisResponse(BaseModel):
 
 
 def _store_analysis(parsed_email, results: dict, db: Session,
-                    source: str = "eml", email_id: str = None) -> EmailAnalysis:
-    """Store analysis results in the database."""
+                    source: str = "eml", email_id: str = None,
+                    owner_account: str | None = None) -> EmailAnalysis:
+    """Store analysis results in the database.
+
+    F-16: rows are stamped with the authenticated account that produced them
+    (owner_account). The value ALWAYS comes from the server-side session —
+    never from client input.
+    """
     analysis = EmailAnalysis(
         id=str(uuid.uuid4()),
         email_id=email_id or str(uuid.uuid4()),
         source=source,
+        owner_account=owner_account,
         sender=parsed_email.sender,
         sender_email=parsed_email.sender_email,
         sender_domain=parsed_email.sender_domain,
@@ -116,6 +125,7 @@ def _store_analysis(parsed_email, results: dict, db: Session,
 
 @router.post("/analyze/eml", response_model=None)
 async def analyze_eml_file(
+    request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -134,7 +144,12 @@ async def analyze_eml_file(
     try:
         parsed_email = parse_eml_content(content)
         results = engine.analyze(parsed_email)
-        analysis = _store_analysis(parsed_email, results, db, source="eml")
+        # F-16: stamp the row with the authenticated account (None when the
+        # caller has no Gmail session — a legacy/public analysis).
+        analysis = _store_analysis(
+            parsed_email, results, db, source="eml",
+            owner_account=resolve_account(request),
+        )
 
         return {
             "id": analysis.id,
@@ -171,13 +186,17 @@ async def analyze_eml_file(
 @router.post("/analyze/raw", response_model=None)
 async def analyze_raw_email(
     request: AnalyzeURLRequest,
+    raw_request: Request,
     db: Session = Depends(get_db),
 ):
     """Analyze raw email content (for testing)."""
     try:
         parsed_email = parse_eml_content(request.email_content)
         results = engine.analyze(parsed_email)
-        analysis = _store_analysis(parsed_email, results, db, source="raw")
+        analysis = _store_analysis(
+            parsed_email, results, db, source="raw",
+            owner_account=resolve_account(raw_request),
+        )
 
         return {
             "id": analysis.id,
@@ -211,32 +230,49 @@ async def analyze_raw_email(
 
 @router.get("/emails")
 async def get_analyzed_emails(
+    request: Request,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
 ):
-    """Get all analyzed emails with summary info."""
-    emails = db.query(EmailAnalysis).order_by(EmailAnalysis.analyzed_at.desc()).offset(skip).limit(limit).all()
+    """Get all analyzed emails with summary info.
+
+    F-19: list responses use the SUMMARY serializer — body_text/body_html
+    are never included. Full bodies are only available via the detail
+    endpoint (GET /api/emails/{analysis_id}).
+    """
+    # F-16: account-scoped listing — the caller sees their own account's rows
+    # (plus legacy NULL-owner rows); nobody else's.
+    account = resolve_account(request)
+    base_query = db.query(EmailAnalysis)
+    emails = scope_owner(base_query, account).order_by(
+        EmailAnalysis.analyzed_at.desc()).offset(skip).limit(limit).all()
+    total = scope_owner(db.query(EmailAnalysis), account).count()
     return {
-        "emails": [email.to_dict() for email in emails],
-        "total": db.query(EmailAnalysis).count(),
+        "emails": [email.to_summary_dict() for email in emails],
+        "total": total,
     }
 
 
 @router.get("/emails/{analysis_id}")
 async def get_email_analysis(
     analysis_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
     Get detailed analysis for a specific email by internal analysis ID.
 
-    Includes stored body content, full headers, summary, recommended
-    actions and any AI verification block. Returns a safe 404 for
-    unknown IDs (internal IDs are UUIDs; malformed ones can't match).
+    F-19 DETAIL/INVESTIGATION endpoint: the ONLY /api/emails route returning
+    the stored body (body_text/body_html) for an authorized caller, in
+    addition to headers, findings, summary, recommended actions and any AI
+    verification block. Returns a safe 404 for unknown IDs (internal IDs are
+    UUIDs; malformed ones can't match).
     """
+    # F-16: an ID from Account A must never retrieve Account B's email.
+    account = resolve_account(request)
     analysis = db.query(EmailAnalysis).filter(EmailAnalysis.id == analysis_id).first()
-    if not analysis:
+    if not analysis or not owns_row(analysis, account):
         raise HTTPException(status_code=404, detail="Email analysis not found. It may have been deleted.")
 
     data = analysis.to_dict()
@@ -268,9 +304,14 @@ async def delete_email_analysis(
 
 
 @router.get("/statistics")
-async def get_statistics(db: Session = Depends(get_db)):
-    """Get aggregate statistics about analyzed emails."""
-    total = db.query(EmailAnalysis).count()
+async def get_statistics(request: Request, db: Session = Depends(get_db)):
+    """Get aggregate statistics about analyzed emails (F-16: account-scoped)."""
+    account = resolve_account(request)
+
+    def _owned(query):
+        return scope_owner(query, account)
+
+    total = _owned(db.query(EmailAnalysis)).count()
 
     if total == 0:
         return {
@@ -284,10 +325,19 @@ async def get_statistics(db: Session = Depends(get_db)):
             "recent_analyses": [],
         }
 
-    safe_count = db.query(EmailAnalysis).filter(EmailAnalysis.classification == "SAFE").count()
-    low_risk_count = db.query(EmailAnalysis).filter(EmailAnalysis.classification == "LOW RISK").count()
-    suspicious_count = db.query(EmailAnalysis).filter(EmailAnalysis.classification == "SUSPICIOUS").count()
-    high_risk_count = db.query(EmailAnalysis).filter(EmailAnalysis.classification == "HIGH RISK").count()
+    # F-21: classification is now persisted in canonical underscore form
+    # (detection.rules.RiskLevel). Legacy rows may still carry the spaced
+    # "LOW RISK" / "HIGH RISK" forms, so every count must match BOTH
+    # representations. risk_distribution keeps spaced display keys for the
+    # frontend contract.
+    safe_count = _owned(db.query(EmailAnalysis)).filter(EmailAnalysis.classification == RiskLevel.SAFE).count()
+    low_risk_count = _owned(db.query(EmailAnalysis)).filter(
+        EmailAnalysis.classification.in_([RiskLevel.LOW_RISK, "LOW RISK"])
+    ).count()
+    suspicious_count = _owned(db.query(EmailAnalysis)).filter(EmailAnalysis.classification == RiskLevel.SUSPICIOUS).count()
+    high_risk_count = _owned(db.query(EmailAnalysis)).filter(
+        EmailAnalysis.classification.in_([RiskLevel.HIGH_RISK, "HIGH RISK"])
+    ).count()
 
     risk_distribution = {
         "SAFE": safe_count,
@@ -296,23 +346,29 @@ async def get_statistics(db: Session = Depends(get_db)):
         "HIGH RISK": high_risk_count,
     }
 
-    # Get top sender domains
+    # Get top sender domains (account-scoped)
     from sqlalchemy import func
     top_domains = (
-        db.query(EmailAnalysis.sender_domain, func.count(EmailAnalysis.sender_domain))
+        _owned(db.query(EmailAnalysis.sender_domain))
+        .with_entities(EmailAnalysis.sender_domain, func.count(EmailAnalysis.sender_domain))
         .group_by(EmailAnalysis.sender_domain)
         .order_by(func.count(EmailAnalysis.sender_domain).desc())
         .limit(10)
         .all()
     )
 
-    # Get recent analyses
-    recent = db.query(EmailAnalysis).order_by(EmailAnalysis.analyzed_at.desc()).limit(10).all()
+    # Get recent analyses (account-scoped)
+    recent = _owned(db.query(EmailAnalysis)).order_by(EmailAnalysis.analyzed_at.desc()).limit(10).all()
 
-    # Get recent threats (HIGH RISK or SUSPICIOUS)
+    # Get recent threats (HIGH_RISK or SUSPICIOUS; dual-form for legacy rows;
+    # account-scoped)
     recent_threats = (
-        db.query(EmailAnalysis)
-        .filter(EmailAnalysis.classification.in_(["HIGH RISK", "SUSPICIOUS"]))
+        _owned(db.query(EmailAnalysis))
+        .filter(
+            EmailAnalysis.classification.in_(
+                [RiskLevel.HIGH_RISK, "HIGH RISK", RiskLevel.SUSPICIOUS]
+            )
+        )
         .order_by(EmailAnalysis.analyzed_at.desc())
         .limit(5)
         .all()
@@ -326,12 +382,9 @@ async def get_statistics(db: Session = Depends(get_db)):
         "high_risk_count": high_risk_count,
         "risk_distribution": risk_distribution,
         "top_sender_domains": [{"domain": d[0], "count": d[1]} for d in top_domains],
-        "recent_analyses": [e.to_dict() for e in recent],
-        "recent_threats": [e.to_dict() for e in recent_threats],
+        "recent_analyses": [e.to_summary_dict() for e in recent],
+        "recent_threats": [e.to_summary_dict() for e in recent_threats],
     }
 
 
-@router.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "PhishGuard API", "version": "1.0.0"}
+

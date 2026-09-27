@@ -18,9 +18,10 @@ import csv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from detection.engine import DetectionEngine
+from detection.rules import is_risky_level, RiskLevel
 from backend.app.parser.email_parser import parse_eml_file
 
-MALICIOUS_CLASSES = ('HIGH RISK', 'SUSPICIOUS', 'LOW RISK')
+MALICIOUS_CLASSES = ('HIGH_RISK', 'SUSPICIOUS', 'LOW_RISK')
 
 
 def _load_dataset():
@@ -104,7 +105,7 @@ def test_legitimate_password_reset_not_flagged():
     """
     results = _run_evaluation()
     target = next(r for r in results if r['filename'].endswith('support_reply.eml'))
-    assert target['classification'] != 'HIGH RISK', \
+    assert target['classification'] != RiskLevel.HIGH_RISK, \
         f"Legitimate password reset flagged as {target['classification']} (score {target['score']})"
     print("[PASS]  test_legitimate_password_reset_not_flagged passed")
 
@@ -131,7 +132,7 @@ def test_classification_bounds_and_confidence_range():
     for r in results:
         assert 0.0 <= r['score'] <= 100.0, f"Score out of bounds: {r['score']}"
         assert 0.0 <= r['confidence'] <= 1.0, f"Confidence out of bounds: {r['confidence']}"
-        assert r['classification'] in ('SAFE', 'LOW RISK', 'SUSPICIOUS', 'HIGH RISK')
+        assert r['classification'] in ('SAFE', 'LOW_RISK', 'SUSPICIOUS', 'HIGH_RISK')
     print("[PASS]  test_classification_bounds_and_confidence_range passed")
 
 

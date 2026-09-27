@@ -2,13 +2,14 @@
  * PhishGuard desktop shell — preload.
  *
  * The renderer is plain same-origin web content served by the local FastAPI
- * backend and needs NO Node access and NO general-purpose IPC. The ONLY
- * exposed surface is a one-way native-notification call used by
- * NotificationBridge.jsx: it forwards two bounded strings to the main process,
- * which delivers the Windows toast (and owns the AppUserModelID needed for it
- * to display). No file paths, no shell, no tokens, no arbitrary channels —
- * GROQ_API_KEY, Gmail tokens and the filesystem are never reachable from the
- * renderer.
+ * backend. Exposed surface is intentionally minimal:
+ *
+ *   1. showNotification  — one-way native toast bridge (NotificationBridge.jsx).
+ *   2. getApiToken       — pulls the local API bearer token from the main
+ *      process ONCE via IPC. The token is then kept only in renderer memory
+ *      (services/api.js) and sent as `Authorization: Bearer` on /api calls.
+ *      It is never written to localStorage, never placed in a URL, never
+ *      logged. GROQ_API_KEY, Gmail tokens and the filesystem stay unreachable.
  */
 'use strict';
 
@@ -22,4 +23,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       body: body.slice(0, 300),
     });
   },
+
+  getApiToken: () => ipcRenderer.invoke('mailbuddy:get-api-token'),
 });

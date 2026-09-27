@@ -16,14 +16,16 @@ The final risk score (0-100) is calculated by summing category scores:
 | Category           | Max Score | Analyzer           |
 |--------------------|-----------|---------------------|
 | Sender/Domain      | 20 pts    | sender.py           |
-| URL Analysis       | 30 pts    | url_analyzer.py     |
+| URL Analysis       | 25 pts    | url_analyzer.py     |
 | Content            | 20 pts    | content_analyzer.py |
-| Headers            | 15 pts    | header_analyzer.py  |
+| Headers            | 20 pts    | header_analyzer.py  |
 | Attachments        | 10 pts    | attachment_analyzer.py |
+| Domain Intel       | 5 pts     | intelligence/domain_intelligence.py |
+| Correlation        | 10 pts    | engine.py (cross-signal) |
 | Other              | 5 pts     | (reserved)          |
 | **Total**          | **100**   |                     |
 
-Each category is **capped** at its maximum, preventing any single category from dominating the score.
+Each category is **capped** at its maximum, preventing any single category from dominating the score. Additionally, an explicit SPF fail + DKIM fail + DMARC fail combination enforces a score floor of 50 (SUSPICIOUS) — wholly unauthenticated messages can never classify SAFE or LOW RISK.
 
 ## Risk Classification
 
@@ -84,12 +86,14 @@ Each category is **capped** at its maximum, preventing any single category from 
 |---------|----------|--------|-------------|
 | HEADER_SPF_FAIL | HIGH | 8 | SPF authentication failed |
 | HEADER_DKIM_FAIL | HIGH | 7 | DKIM authentication failed |
-| HEADER_DKIM_FAIL (DMARC) | HIGH | 8 | DMARC authentication failed |
+| HEADER_DMARC_FAIL | HIGH | 8 | DMARC authentication failed |
 | HEADER_MULTIPLE_AUTH_FAILURES | HIGH | 10 | 2+ authentication failures |
 | HEADER_FROM_REPLYTO_MISMATCH | MEDIUM | 6 | From/Reply-To domain mismatch |
-| HEADER_SPF_SOFTFAIL | MEDIUM | 5 | SPF softfail |
+| HEADER_SPF_SOFTFAIL | MEDIUM | 5 | SPF softfail (weak signal — NOT a hard failure) |
 | HEADER_DKIM_NONE | MEDIUM | 4 | No DKIM signature |
 | HEADER_SPF_NONE | LOW | 3 | No SPF record |
+| HEADER_DMARC_NONE | LOW | 2 | No DMARC policy |
+| HEADER_SPF_ERROR / HEADER_DKIM_ERROR / HEADER_DMARC_ERROR | LOW | 2 | Evaluation error (temperror/permerror) — NOT a failure |
 | HEADER_RETURN_PATH_MISMATCH | LOW | 3 | Return-Path domain mismatch |
 
 ### Attachment Analysis

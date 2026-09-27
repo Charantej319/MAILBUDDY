@@ -56,7 +56,7 @@ PhishGuard is a defensive email security analysis platform that detects phishing
 - Extracts attachment metadata (filename, MIME type, size)
 
 ### 2. Detection Engine (`detection/`)
-A modular detection system with five specialized analyzers:
+A modular detection system with five specialized content analyzers plus domain intelligence and cross-signal correlation:
 
 #### Sender Analyzer (`sender.py`)
 - Display name vs domain mismatch detection
@@ -96,6 +96,13 @@ A modular detection system with five specialized analyzers:
 - Macro-enabled Office format detection
 - MIME type/extension mismatch detection
 
+#### Domain Intelligence (`intelligence/domain_intelligence.py`)
+- Bounded, cache-backed MX record resolution (dnspython) for the sender's domain
+- Brand lookalike and suspicious-TLD intelligence
+
+#### Cross-Signal Correlation (in `engine.py`)
+- Combines related findings (e.g. credential request + suspicious login URL) into correlation findings with anti-double-counting deduplication
+
 ### 3. Scoring Engine (`scoring.py`)
 - Combines findings from all analyzers
 - Applies category-level score capping
@@ -130,6 +137,6 @@ A modular detection system with five specialized analyzers:
 - **Defensive only**: Never automatically deletes, replies, or forwards emails
 - **Static analysis**: URLs are analyzed without visiting them (SSRF prevention)
 - **No execution**: Attachments are never opened or executed
-- **Token protection**: OAuth tokens handled server-side, never committed
+- **Token protection**: Gmail OAuth tokens are encrypted at rest (Windows DPAPI / Fernet fallback) and never exposed to the frontend
 - **Least privilege**: Gmail API uses readonly scope
 - **Explainable**: Every finding includes rule ID, severity, evidence, and explanation

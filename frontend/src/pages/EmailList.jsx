@@ -101,10 +101,15 @@ function EmailList({ gmailStatus }) {
 
   const filteredEmails = emails.filter(email => {
     if (filter === 'threats') {
-      if (email.classification !== 'HIGH RISK' && email.classification !== 'SUSPICIOUS') return false
+      // F-21: accept canonical ('HIGH_RISK') and legacy ('HIGH RISK') forms.
+      if (email.classification !== 'HIGH_RISK' && email.classification !== 'HIGH RISK' && email.classification !== 'SUSPICIOUS') return false
     } else if (filter !== 'all') {
       const map = { safe: 'SAFE', low: 'LOW RISK', suspicious: 'SUSPICIOUS', high: 'HIGH RISK' }
-      if (email.classification !== map[filter]) return false
+      // F-21: match either stored form for the mapped level.
+      const matched = Object.values(map).includes(email.classification)
+        || (filter === 'low' && email.classification === 'LOW_RISK')
+        || (filter === 'high' && email.classification === 'HIGH_RISK')
+      if (!matched) return false
     }
     if (pfilter !== 'all') {
       if (pfilter.startsWith('p:')) {
@@ -141,8 +146,8 @@ function EmailList({ gmailStatus }) {
 
   const filterCounts = {
     all: emails.length,
-    threats: emails.filter(e => e.classification === 'HIGH RISK' || e.classification === 'SUSPICIOUS').length,
-    high: emails.filter(e => e.classification === 'HIGH RISK').length,
+    threats: emails.filter(e => e.classification === 'HIGH RISK' || e.classification === 'HIGH_RISK' || e.classification === 'SUSPICIOUS').length,
+    high: emails.filter(e => e.classification === 'HIGH RISK' || e.classification === 'HIGH_RISK').length,
     suspicious: emails.filter(e => e.classification === 'SUSPICIOUS').length,
     low: emails.filter(e => e.classification === 'LOW RISK').length,
     safe: emails.filter(e => e.classification === 'SAFE').length,
@@ -396,8 +401,8 @@ function getBadgeClass(classification) {
 }
 
 function getShortClassification(classification) {
-  if (classification === 'LOW RISK') return 'LOW'
-  if (classification === 'HIGH RISK') return 'HIGH'
+  if (classification === 'LOW RISK' || classification === 'LOW_RISK') return 'LOW'
+  if (classification === 'HIGH RISK' || classification === 'HIGH_RISK') return 'HIGH'
   return classification
 }
 

@@ -8,7 +8,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from detection.scoring import RiskScorer, Finding
-from detection.rules import Category, classify_risk
+from detection.rules import Category, classify_risk, RiskLevel
 
 
 def test_safe_classification():
@@ -21,9 +21,9 @@ def test_safe_classification():
 
 def test_low_risk_classification():
     """Test that medium-low scores are classified as LOW RISK."""
-    assert classify_risk(25) == "LOW RISK"
-    assert classify_risk(35) == "LOW RISK"
-    assert classify_risk(49) == "LOW RISK"
+    assert classify_risk(25) == RiskLevel.LOW_RISK
+    assert classify_risk(35) == RiskLevel.LOW_RISK
+    assert classify_risk(49) == RiskLevel.LOW_RISK
     print("[PASS]  test_low_risk_classification passed")
 
 
@@ -37,9 +37,9 @@ def test_suspicious_classification():
 
 def test_high_risk_classification():
     """Test that high scores are classified as HIGH RISK."""
-    assert classify_risk(75) == "HIGH RISK"
-    assert classify_risk(90) == "HIGH RISK"
-    assert classify_risk(100) == "HIGH RISK"
+    assert classify_risk(75) == RiskLevel.HIGH_RISK
+    assert classify_risk(90) == RiskLevel.HIGH_RISK
+    assert classify_risk(100) == RiskLevel.HIGH_RISK
     print("[PASS]  test_high_risk_classification passed")
 
 
@@ -98,7 +98,7 @@ def test_max_score_cap():
             ))
     score, classification, _, _, _ = scorer.calculate_score(findings)
     assert score == 100.0, f"Expected 100 (max cap), got {score}"
-    assert classification == "HIGH RISK", f"Expected HIGH RISK, got {classification}"
+    assert classification == RiskLevel.HIGH_RISK, f"Expected HIGH_RISK, got {classification}"
     print("[PASS]  test_max_score_cap passed")
 
 
@@ -112,7 +112,7 @@ def test_mixed_findings():
     ]
     score, classification, findings_list, _, _ = scorer.calculate_score(findings)
     assert score == 27.0, f"Expected 27 (7+15+5), got {score}"
-    assert classification == "LOW RISK", f"Expected LOW RISK, got {classification}"
+    assert classification == RiskLevel.LOW_RISK, f"Expected LOW_RISK, got {classification}"
     assert len(findings_list) == 3, f"Expected 3 findings in output, got {len(findings_list)}"
     print("[PASS]  test_mixed_findings passed")
 

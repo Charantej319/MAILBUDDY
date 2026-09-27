@@ -234,9 +234,10 @@ def test_payload_truncates_oversized_content():
 def test_ai_status_route_safe_without_config():
     from fastapi.testclient import TestClient
     from backend.app.main import app
+    from tests.conftest import api_auth_headers
 
     client = TestClient(app)
-    resp = client.get("/api/ai/status")
+    resp = client.get("/api/ai/status", headers=api_auth_headers())
     assert resp.status_code == 200
     data = resp.json()
     assert "configured" in data
@@ -264,7 +265,8 @@ def test_ai_verify_route_without_config_returns_unavailable():
     db.commit()
     try:
         client = TestClient(app)
-        resp = client.post(f"/api/ai/verify/{row.id}")
+        from tests.conftest import api_auth_headers
+        resp = client.post(f"/api/ai/verify/{row.id}", headers=api_auth_headers())
         assert resp.status_code == 200
         data = resp.json()
         assert data["ai"]["status"] == "UNAVAILABLE"
@@ -283,9 +285,10 @@ def test_ai_verify_route_without_config_returns_unavailable():
 def test_ai_verify_route_404_unknown_id():
     from fastapi.testclient import TestClient
     from backend.app.main import app
+    from tests.conftest import api_auth_headers
 
     client = TestClient(app)
-    resp = client.post(f"/api/ai/verify/{uuid.uuid4()}")
+    resp = client.post(f"/api/ai/verify/{uuid.uuid4()}", headers=api_auth_headers())
     assert resp.status_code == 404
     print("[PASS]  test_ai_verify_route_404_unknown_id passed")
 

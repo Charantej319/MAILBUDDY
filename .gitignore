@@ -70,6 +70,7 @@ reports/*.json
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+tests/.pytest-data-dir/
 
 # OS
 .DS_Store
@@ -80,6 +81,7 @@ Desktop.ini
 *.pem
 *.key
 *.cert
+*.token
 secrets/
 credentials/
 tokens/

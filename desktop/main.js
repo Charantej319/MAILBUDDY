@@ -158,6 +158,45 @@ function registerNotificationIpc() {
   });
 }
 
+// ── Local API token bridge ────────────────────────────────────────────
+// The backend writes a 0600 api.token file into PHISHGUARD_DATA_DIR at
+// startup. The main process reads it ONCE and hands it to the renderer over
+// IPC on request; the renderer keeps it in memory only and sends it as
+// `Authorization: Bearer` on /api calls. The value is never logged and never
+// leaves the machine. Adopted-backend mode (file missing) returns null and
+// the renderer proceeds without a token (cookie-only surface still works).
+let _apiTokenCache = null;
+
+function readBackendApiToken(dataDir) {
+  // Primary: the backend's own data dir (desktop mode). Fallback: the
+  // backend/ directory (dev uvicorn started without PHISHGUARD_DATA_DIR,
+  // later adopted by Electron).
+  const candidates = [
+    path.join(dataDir, 'api.token'),
+    path.resolve(__dirname, '..', 'backend', 'api.token'),
+  ];
+  for (const tokenPath of candidates) {
+    try {
+      const value = fs.readFileSync(tokenPath, 'utf8').trim();
+      if (value.length >= 32) return value; // sanity: 32-byte hex token
+      console.error('api.token file has unexpected length; ignoring');
+      return null;
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.error('api.token read failed:', err.message);
+    }
+  }
+  return null;
+}
+
+function registerApiTokenIpc(dataDir) {
+  ipcMain.handle('mailbuddy:get-api-token', () => {
+    if (_apiTokenCache === null) {
+      _apiTokenCache = readBackendApiToken(dataDir);
+    }
+    return _apiTokenCache;
+  });
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1360,
@@ -211,7 +250,9 @@ app.on('before-quit', () => { app.isQuitting = true; });
 app.whenReady().then(async () => {
   try {
     registerNotificationIpc();
+    const dataDir = backend.defaultDataDir();
     await startBackendOrDie();
+    registerApiTokenIpc(dataDir);
     createWindow();
     if (shouldQuit) {
       // E2E mode: verify the window loaded real content + security posture,

@@ -158,18 +158,35 @@ def test_scoring_benign_signals():
 
 
 def test_scoring_signal_deduplication():
-    """Test that correlated authentication signals are deduplicated."""
+    """Test that correlated authentication signals are deduplicated.
+
+    Session 3 (F-6) update: SPF+DKIM+DMARC fail (+ multiple-failures) now
+    activates the composite authentication severity floor — the strongest
+    header-only spoofing evidence must never be compressed below SUSPICIOUS
+    by the HEADER category cap. Deduplication of the overlapping findings
+    still applies to OTHER combinations (e.g. two SPF-related failures), so
+    the anti-double-counting behavior itself is unchanged."""
     scorer = RiskScorer()
-    findings = [
+
+    # The strong all-fail combination: floor guarantees >= 50 (SUSPICIOUS).
+    all_fail = [
         Finding(rule_id="HEADER_SPF_FAIL", category=Category.HEADER, severity="HIGH", points=8, message="SPF fail"),
         Finding(rule_id="HEADER_DKIM_FAIL", category=Category.HEADER, severity="HIGH", points=7, message="DKIM fail"),
         Finding(rule_id="HEADER_DMARC_FAIL", category=Category.HEADER, severity="HIGH", points=8, message="DMARC fail"),
         Finding(rule_id="HEADER_MULTIPLE_AUTH_FAILURES", category=Category.HEADER, severity="HIGH", points=10, message="Multiple failures"),
     ]
-    score, _, _, _, _ = scorer.calculate_score(findings)
-    # With deduplication, total should be less than sum of all points
-    raw_sum = 8 + 7 + 8 + 10
-    assert score < raw_sum
+    score, _, _, _, _ = scorer.calculate_score(all_fail)
+    assert score >= 50, f"composite auth floor must apply, got {score}"
+
+    # Ordinary deduplication still works for non-floor combinations.
+    partial = [
+        Finding(rule_id="HEADER_SPF_FAIL", category=Category.HEADER, severity="HIGH", points=8, message="SPF fail"),
+        Finding(rule_id="HEADER_SPF_SOFTFAIL", category=Category.HEADER, severity="MEDIUM", points=5, message="SPF softfail"),
+        Finding(rule_id="HEADER_SPF_NONE", category=Category.HEADER, severity="LOW", points=3, message="SPF none"),
+    ]
+    score_partial, _, _, _, _ = scorer.calculate_score(partial)
+    raw_sum = 8 + 5 + 3
+    assert score_partial < raw_sum, "overlapping SPF findings must still dedup"
     print("[PASS]  test_scoring_signal_deduplication passed")
 
 
@@ -282,7 +299,12 @@ def test_engine_top_findings():
 # ── Risk Score Boundary Tests ──────────────────────────────────────
 
 def test_risk_score_zero():
-    """Test that clean emails score 0."""
+    """Test that clean emails score 0.
+
+    Updated (Session 6): Session 4 added HEADER_MISSING_MESSAGE_ID (2 pts),
+    so a truly clean email must now include a Message-ID header. The clean
+    fixture is made RFC-plausible instead of weakening the zero assertion.
+    """
     engine = DetectionEngine()
     from backend.app.parser.email_parser import ParsedEmail
     parsed = ParsedEmail(
@@ -291,7 +313,10 @@ def test_risk_score_zero():
         sender_domain="company.com",
         subject="Hello",
         body_text="Hi, just checking in.",
-        headers={'From': 'john@company.com'},
+        headers={
+            'From': 'john@company.com',
+            'Message-ID': '<abc123@company.com>',
+        },
     )
     results = engine.analyze(parsed)
     assert results["risk_score"] == 0.0
@@ -321,7 +346,7 @@ def test_risk_score_max():
     )
     results = engine.analyze(parsed)
     assert results["risk_score"] >= 75
-    assert results["classification"] == "HIGH RISK"
+    assert results["classification"] == "HIGH_RISK"
     print("[PASS]  test_risk_score_max passed")
 
 

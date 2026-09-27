@@ -355,7 +355,12 @@ def test_prompt_injection_stays_content(monkeypatch, fake_groq):
 def _client():
     from fastapi.testclient import TestClient
     from backend.app.main import app
-    return TestClient(app), app
+    from tests.conftest import api_auth_headers
+
+    client = TestClient(app)
+    # /api routes require the local bearer token (Finding 15).
+    client.headers.update(api_auth_headers())
+    return client, app
 
 
 def test_verify_route_groq_success(monkeypatch, fake_groq):

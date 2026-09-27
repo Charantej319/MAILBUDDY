@@ -1,6 +1,7 @@
 """
 Google OAuth 2.0 authentication for Gmail API access.
-Tokens stored server-side in SQLite. Frontend never sees tokens.
+Tokens stored server-side in SQLite, encrypted at rest via TokenStorage.
+Frontend never sees tokens.
 """
 
 import logging
@@ -15,6 +16,7 @@ from ..config import settings
 from ..database.connection import SessionLocal
 from ..models.email import GmailToken
 from .sessions import create_session, get_session_user, remove_session, create_oauth_state, consume_oauth_state
+from .token_storage import encrypt as encrypt_token
 
 logger = logging.getLogger("phishguard.auth")
 
@@ -22,7 +24,11 @@ router = APIRouter(prefix="/auth")
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GMAIL_API_BASE = "https://www.googleapis.com/gmail/v1/users/me"
+
+# Short timeout for the best-effort revocation call on disconnect.
+_REVOKE_TIMEOUT = 5.0
 
 
 def _frontend_url(path: str, params: dict | None = None) -> str:
@@ -33,31 +39,68 @@ def _frontend_url(path: str, params: dict | None = None) -> str:
     return url
 
 
-def _callback_origin(request: Request) -> str:
-    """Same-origin base URL the OAuth flow was started from (e.g. http://localhost:8000).
+def _allowed_callback_origins() -> list[str]:
+    """Origins the OAuth callback is permitted to redirect back to.
 
-    The flow always starts via a relative URL ('/auth/google') from the app
-    origin, so the browser's Host header on the callback is that origin —
-    regardless of whether it is the packaged desktop app (FastAPI-served SPA on
-    localhost:8000) or Vite dev (proxied through localhost:5173). Deriving it
-    from the request keeps the post-auth redirect same-origin in BOTH
-    environments and never sends the desktop app to the nonexistent Vite dev
-    server (:5173), which previously left a blank page after approval.
+    Derived from the configured local application origin (backend port +
+    the loopback hosts the app actually binds/serves), never from an
+    attacker-controlled request header.
     """
-    host = request.headers.get("host", "localhost:8000")
-    scheme = request.headers.get("x-forwarded-proto", "http").split(",")[0].strip()
-    return f"{scheme}://{host}"
+    from urllib.parse import urlparse
+
+    redirect_origin = urlparse(settings.GOOGLE_REDIRECT_URI)
+    origins = set()
+    if redirect_origin.scheme and redirect_origin.netloc:
+        origins.add(f"{redirect_origin.scheme}://{redirect_origin.netloc}")
+    # The registered local app origin(s): localhost + 127.0.0.1 on the
+    # configured backend port.
+    port = redirect_origin.port or 8000
+    origins.add(f"http://localhost:{port}")
+    origins.add(f"http://127.0.0.1:{port}")
+    return sorted(origins)
+
+
+def _callback_origin(request: Request) -> str:
+    """Allowlisted same-origin base URL for the post-OAuth redirect.
+
+    The Host / X-Forwarded-Proto headers are only ever matched against the
+    configured allowlist (settings.LOCAL_APP_ORIGIN plus the registered
+    OAuth redirect origin). An unexpected Host can NOT influence the
+    redirect target — it falls back to the configured origin.
+    """
+    host = (request.headers.get("host") or "").lower()
+    forwarded = request.headers.get("x-forwarded-proto")
+    candidates = []
+    if forwarded:
+        for scheme in forwarded.split(","):
+            scheme = scheme.strip()
+            if scheme and host:
+                candidates.append(f"{scheme}://{host}")
+    if host:
+        candidates.append(f"http://{host}")
+
+    allowed = set(_allowed_callback_origins())
+    local = settings.LOCAL_APP_ORIGIN
+    if local:
+        allowed.add(local)
+
+    for candidate in candidates:
+        if candidate in allowed:
+            return candidate
+
+    # Not on the allowlist (e.g. Host: evil.example) → configured origin.
+    return local or f"http://localhost:{settings.BACKEND_PORT}"
 
 
 def _post_auth_redirect(request: Request, params: dict | None = None) -> str:
     """Redirect target after OAuth (success or failure).
 
     Desktop/packaged mode (PHISHGUARD_DATA_DIR set by the Electron shell): the
-    SPA is served by this same FastAPI origin, so redirect back to the Host the
-    flow actually started on — never to the configured FRONTEND_URL (e.g. the
-    Vite dev server :5173), which does not exist in the packaged app and left a
-    blank page after Google approval.
+    SPA is served by this same FastAPI origin, so redirect back to the
+    allowlisted local origin — never to the configured FRONTEND_URL (e.g. the
+    Vite dev server :5173), which does not exist in the packaged app.
     Dev mode (PHISHGUARD_DATA_DIR unset): unchanged — FRONTEND_URL (:5173).
+    The Host header can never steer the redirect to a foreign origin.
     """
     if os.environ.get("PHISHGUARD_DATA_DIR"):
         url = f"{_callback_origin(request)}/settings"
@@ -108,7 +151,7 @@ async def google_callback(
     error: str | None = None,
     state: str | None = None,
 ):
-    """Handle Google OAuth callback. Store tokens server-side."""
+    """Handle Google OAuth callback. Store encrypted tokens server-side."""
     # 1. User cancelled / denied consent at the Google screen.
     if error:
         return _log_and_redirect(request, error, "Google returned an OAuth error")
@@ -179,33 +222,36 @@ async def google_callback(
     if not user_email:
         return _log_and_redirect(request, "profile_failed", "Gmail profile did not include an email address")
 
-    # 5. Store tokens server-side (never sent to the frontend).
+    # 5. Encrypt BEFORE persistence (never store plaintext OAuth tokens).
+    access_encrypted = encrypt_token(access_token)
+    refresh_encrypted = encrypt_token(refresh_token) if refresh_token else None
+
     db = SessionLocal()
     try:
         existing = db.query(GmailToken).filter(GmailToken.user_email == user_email).first()
         if existing:
-            existing.access_token = access_token
-            if refresh_token:
-                existing.refresh_token = refresh_token
+            existing.access_token = access_encrypted
+            if refresh_encrypted:
+                existing.refresh_token = refresh_encrypted
             existing.token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
             existing.updated_at = datetime.utcnow()
         else:
             db.add(GmailToken(
                 user_email=user_email,
-                access_token=access_token,
-                refresh_token=refresh_token,
+                access_token=access_encrypted,
+                refresh_token=refresh_encrypted,
                 token_expiry=datetime.utcnow() + timedelta(seconds=expires_in),
             ))
         db.commit()
-        logger.info("Gmail OAuth: tokens stored for %s", user_email)
+        logger.info("Gmail OAuth: encrypted tokens stored for %s", user_email)
     finally:
         db.close()
 
     # 6. Create session (stored in DB, survives server restarts/reloads).
     session_id = create_session(user_email)
 
-    # 7. Redirect back to the app the flow started from (same-origin in dev
-    #    and desktop) with the session cookie.
+    # 7. Redirect back to the allowlisted app origin (same-origin in dev and
+    #    desktop) with the session cookie.
     response = RedirectResponse(url=_post_auth_redirect(request, {"connected": "true"}))
     response.set_cookie(
         key="phishguard_session",
@@ -215,6 +261,33 @@ async def google_callback(
         max_age=86400 * 7,  # 7 days
     )
     return response
+
+
+async def revoke_google_token(token_value: str | None) -> bool:
+    """Best-effort revocation of a Google OAuth grant.
+
+    Calls Google's official revocation endpoint with a short timeout.
+    Returns True only when Google confirmed (HTTP 200). Never logs the
+    token. Failures are logged by type only; the caller decides whether
+    local cleanup still proceeds (it must — disconnect stays usable).
+    """
+    if not token_value:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=_REVOKE_TIMEOUT) as client:
+            response = await client.post(
+                GOOGLE_REVOKE_URL,
+                data={"token": token_value},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        if response.status_code == 200:
+            logger.info("Google OAuth grant revoked")
+            return True
+        logger.warning("Google OAuth revoke returned HTTP %s", response.status_code)
+        return False
+    except httpx.RequestError as exc:
+        logger.warning("Google OAuth revoke network failure: %s", type(exc).__name__)
+        return False
 
 
 @router.post("/google/refresh")
@@ -234,10 +307,12 @@ async def refresh_token_endpoint(request: Request):
         if not token_record or not token_record.refresh_token:
             raise HTTPException(status_code=401, detail="No refresh token available")
 
+        refresh_plaintext = decrypt_stored_token(token_record.refresh_token)
+
         token_data = {
             "client_id": settings.GOOGLE_CLIENT_ID,
             "client_secret": settings.GOOGLE_CLIENT_SECRET,
-            "refresh_token": token_record.refresh_token,
+            "refresh_token": refresh_plaintext,
             "grant_type": "refresh_token",
         }
 
@@ -250,7 +325,7 @@ async def refresh_token_endpoint(request: Request):
 
         new_tokens = token_response.json()
 
-        token_record.access_token = new_tokens.get("access_token")
+        token_record.access_token = encrypt_token(new_tokens.get("access_token"))
         token_record.token_expiry = datetime.utcnow() + timedelta(
             seconds=new_tokens.get("expires_in", 3600)
         )
@@ -262,9 +337,22 @@ async def refresh_token_endpoint(request: Request):
         db.close()
 
 
+def decrypt_stored_token(encrypted_value: str | None) -> str:
+    """Decrypt a stored token through the canonical TokenStorage layer.
+
+    Raises TokenDecryptionError on failure — callers convert that into a
+    clear 401 ("reconnect your account") instead of silently using "".
+    """
+    from .token_storage import TokenDecryptionError, TokenStorage
+
+    if not encrypted_value:
+        raise TokenDecryptionError("no stored token")
+    return TokenStorage.decrypt(encrypted_value)
+
+
 @router.post("/google/disconnect")
 async def disconnect_gmail(request: Request):
-    """Disconnect Gmail and remove stored tokens."""
+    """Disconnect Gmail: revoke the Google grant, then remove local state."""
     session_id = request.cookies.get("phishguard_session")
     if not session_id:
         raise HTTPException(status_code=401, detail="No active session")
@@ -275,6 +363,24 @@ async def disconnect_gmail(request: Request):
         try:
             token_record = db.query(GmailToken).filter(GmailToken.user_email == user_email).first()
             if token_record:
+                # Revoke BEFORE deleting the local row. Prefer the refresh
+                # token (it revokes the whole grant incl. access tokens);
+                # fall back to the access token.
+                from .token_storage import TokenDecryptionError, TokenStorage
+
+                revoke_value = None
+                try:
+                    if token_record.refresh_token:
+                        revoke_value = TokenStorage.decrypt(token_record.refresh_token)
+                    elif token_record.access_token:
+                        revoke_value = TokenStorage.decrypt(token_record.access_token)
+                except TokenDecryptionError:
+                    revoke_value = None  # undecryptable -> nothing usable to revoke
+
+                await revoke_google_token(revoke_value)
+
+                # Local cleanup ALWAYS happens, even when revocation failed
+                # (Google unreachable): never leave the credential behind.
                 db.delete(token_record)
                 db.commit()
         finally:

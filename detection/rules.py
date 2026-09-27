@@ -20,6 +20,13 @@ class Finding:
     evidence: str = ""
     explanation: str = ""
     source: str = "Local analysis"
+    # Canonical identity for deduplication of correlated events. Two findings
+    # with the same (rule_id, dedup_key) describe the same underlying mismatch
+    # (e.g. From/Reply-To and From/Return-Path disagreeing with the sender
+    # domain) and contribute ONE scoring entry — the highest-severity copy at
+    # full points — while keeping understandable evidence from the original
+    # finding that it overlaps with the winner.
+    dedup_key: str = ""
 
     def to_dict(self):
         d = asdict(self)
@@ -32,6 +39,28 @@ class Severity(str, Enum):
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
     CRITICAL = "CRITICAL"
+
+
+# F-9: THE canonical severity ranking. Severity strings must never be
+# compared alphabetically ("HIGH" >= "CRITICAL" is True as a string compare,
+# which lets a HIGH finding replace a CRITICAL one in winner selection).
+# Every severity comparison in scoring/correlation code goes through
+# severity_rank(); values are the project's actual Severity enum values.
+_SEVERITY_RANK = {
+    Severity.LOW.value: 1,
+    Severity.MEDIUM.value: 2,
+    Severity.HIGH.value: 3,
+    Severity.CRITICAL.value: 4,
+}
+
+
+def severity_rank(severity: str) -> int:
+    """Numeric rank for a severity value (LOW=1 < MEDIUM=2 < HIGH=3 < CRITICAL=4).
+
+    Unknown severity strings rank 0 so malformed data never outranks real
+    findings.
+    """
+    return _SEVERITY_RANK.get((severity or "").upper(), 0)
 
 
 class Category(str, Enum):
@@ -59,15 +88,85 @@ CATEGORY_WEIGHTS = {
 
 
 def classify_risk(score: float) -> str:
-    """Classify risk level based on score."""
+    """Classify risk level based on score.
+
+    Returns the CANONICAL internal representation (F-21):
+    SAFE | LOW_RISK | SUSPICIOUS | HIGH_RISK — machine-form, used by the
+    detection engine, the DB, and all backend filters. Human-readable
+    display labels ("HIGH RISK") are derived via risk_display_label().
+    """
+    score = max(0.0, min(score, 100.0))
     if score < 25:
-        return "SAFE"
+        return RiskLevel.SAFE
     elif score < 50:
-        return "LOW RISK"
+        return RiskLevel.LOW_RISK
     elif score < 75:
-        return "SUSPICIOUS"
+        return RiskLevel.SUSPICIOUS
     else:
-        return "HIGH RISK"
+        return RiskLevel.HIGH_RISK
+
+
+# F-21: THE single source of truth for risk-level representation.
+# Internal canonical values use the machine form (HIGH_RISK); the historical
+# engine output used the display form ("HIGH RISK"). Both are accepted by
+# normalize_risk_level() so persisted legacy rows never disappear from
+# filters, and display labels come ONLY from risk_display_label().
+class RiskLevel:
+    SAFE = "SAFE"
+    LOW_RISK = "LOW_RISK"
+    SUSPICIOUS = "SUSPICIOUS"
+    HIGH_RISK = "HIGH_RISK"
+
+
+_RISK_LEVEL_ALIASES = {
+    "SAFE": RiskLevel.SAFE,
+    "LOW_RISK": RiskLevel.LOW_RISK,
+    "LOW RISK": RiskLevel.LOW_RISK,
+    "LOWRISK": RiskLevel.LOW_RISK,
+    "SUSPICIOUS": RiskLevel.SUSPICIOUS,
+    "HIGH_RISK": RiskLevel.HIGH_RISK,
+    "HIGH RISK": RiskLevel.HIGH_RISK,
+    "HIGHRISK": RiskLevel.HIGH_RISK,
+    "MEDIUM": RiskLevel.SUSPICIOUS,  # legacy variant seen in exports
+    "THREAT": RiskLevel.HIGH_RISK,   # frontend display label
+    "REVIEW": RiskLevel.SUSPICIOUS,
+}
+
+
+def normalize_risk_level(value: str) -> str:
+    """Normalize any stored/legacy risk representation to the canonical form.
+
+    Accepts machine form ("HIGH_RISK"), display form ("HIGH RISK"), and
+    known legacy variants; unknown values map to SAFE (fail-safe: an
+    unparseable level never inflates risk).
+    """
+    if not value:
+        return RiskLevel.SAFE
+    return _RISK_LEVEL_ALIASES.get(str(value).strip().upper(), RiskLevel.SAFE)
+
+
+def risk_display_label(value: str) -> str:
+    """Human-readable display label for a canonical (or legacy) risk value.
+
+    The frontend's displayed text keeps the traditional spaced form —
+    normalize first so both stored forms render identically.
+    """
+    canonical = normalize_risk_level(value)
+    return {
+        RiskLevel.SAFE: "SAFE",
+        RiskLevel.LOW_RISK: "LOW RISK",
+        RiskLevel.SUSPICIOUS: "SUSPICIOUS",
+        RiskLevel.HIGH_RISK: "HIGH RISK",
+    }[canonical]
+
+
+def is_risky_level(value: str) -> bool:
+    """True for any risk representation that means SUSPICIOUS or worse.
+
+    The one place filters (MailBuddy priority/assistant, statistics, threat
+    lists) should test flagged-ness — accepts both stored forms.
+    """
+    return normalize_risk_level(value) in (RiskLevel.SUSPICIOUS, RiskLevel.HIGH_RISK)
 
 
 def calculate_confidence(findings: list, has_intel: bool = False) -> tuple[str, float]:

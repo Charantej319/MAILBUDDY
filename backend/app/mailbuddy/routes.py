@@ -8,12 +8,13 @@ returns or accepts secrets; the Groq key never leaves the backend process.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database.connection import get_db
 from ..models.email import EmailAnalysis
+from ..auth.account_context import resolve_account, scope_owner, owns_row
 from . import assistant, priority_ai, service
 from .priority import VALID_CATEGORIES, VALID_LEVELS
 
@@ -55,15 +56,17 @@ class SettingsUpdate(BaseModel):
 # ---- Priority ---------------------------------------------------------------
 
 @router.get("/priority/summary")
-def priority_summary(db: Session = Depends(get_db)):
-    """Counts by priority level + attention list for the dashboard."""
+def priority_summary(request: Request, db: Session = Depends(get_db)):
+    """Counts by priority level + attention list for the dashboard (F-16: account-scoped)."""
+    account = resolve_account(request)
     levels = {lvl: 0 for lvl in VALID_LEVELS}
-    rows = db.query(EmailAnalysis.priority_level, EmailAnalysis.id).all()
+    scoped = scope_owner(db.query(EmailAnalysis), account)
+    rows = scoped.with_entities(EmailAnalysis.priority_level, EmailAnalysis.id).all()
     for (level, _id) in rows:
         if level in levels:
             levels[level] += 1
     attention = (
-        db.query(EmailAnalysis)
+        scope_owner(db.query(EmailAnalysis), account)
         .filter(EmailAnalysis.priority_level.in_(("CRITICAL", "HIGH")))
         .order_by(
             EmailAnalysis.priority_level.asc(),  # CRITICAL < HIGH alphabetically
@@ -91,16 +94,18 @@ def priority_summary(db: Session = Depends(get_db)):
             }
             for a in attention
         ],
-        "pending": db.query(EmailAnalysis)
+        "pending": scope_owner(db.query(EmailAnalysis), account)
                       .filter(EmailAnalysis.priority_level.is_(None)).count(),
     }
 
 
 @router.get("/priority/emails")
-def priority_emails(level: str | None = None, category: str | None = None,
+def priority_emails(request: Request, level: str | None = None,
+                    category: str | None = None,
                     limit: int = 50, db: Session = Depends(get_db)):
-    """Emails filtered by priority level and/or category (newest first)."""
-    q = db.query(EmailAnalysis).order_by(EmailAnalysis.created_at.desc())
+    """Emails filtered by priority level and/or category (newest first; F-16: account-scoped)."""
+    account = resolve_account(request)
+    q = scope_owner(db.query(EmailAnalysis), account).order_by(EmailAnalysis.created_at.desc())
     if level:
         if level.upper() not in VALID_LEVELS:
             raise HTTPException(status_code=422, detail=f"invalid level: {level}")
@@ -132,11 +137,13 @@ def priority_emails(level: str | None = None, category: str | None = None,
 
 
 @router.post("/priority/analyze/{analysis_id}")
-async def analyze_priority(analysis_id: str, body: PriorityAnalyzeRequest | None = None,
+async def analyze_priority(analysis_id: str, request: Request,
+                           body: PriorityAnalyzeRequest | None = None,
                            db: Session = Depends(get_db)):
     """Analyze (or re-analyze with force) one email's priority. Cached by default."""
+    account = resolve_account(request)
     row = db.query(EmailAnalysis).filter(EmailAnalysis.id == analysis_id).first()
-    if not row:
+    if not row or not owns_row(row, account):
         raise HTTPException(status_code=404, detail="email analysis not found")
     force = bool(body.force) if body else False
     row = await service.analyze_and_store(row, db, force=force)
@@ -161,18 +168,24 @@ async def analyze_batch(body: dict | None = None, db: Session = Depends(get_db))
 # ---- Assistant ---------------------------------------------------------------
 
 @router.post("/assistant/chat")
-async def assistant_chat(body: ChatRequest, db: Session = Depends(get_db)):
+async def assistant_chat(body: ChatRequest, request: Request,
+                         db: Session = Depends(get_db)):
     """Ask the read-only MailBuddy Assistant about your inbox.
 
     With email_id: grounded answer about THAT email (backend loads it).
     Without: intent-routed mailbox question over a bounded candidate set.
+    F-16: all retrieval, email access, and history are scoped to the
+    authenticated account (identity comes from the session cookie, never
+    from the client).
     """
     enabled = service.get_setting(db, "assistant_enabled")
     if enabled != "true":
         raise HTTPException(status_code=409, detail="MailBuddy Assistant is disabled in Settings")
+    account = resolve_account(request)
     if body.email_id:
-        return await assistant.answer_about_email(db, body.email_id, body.question)
-    result = await assistant.answer_question(db, body.question)
+        return await assistant.answer_about_email(db, body.email_id, body.question,
+                                                  account=account)
+    result = await assistant.answer_question(db, body.question, account=account)
     return result
 
 
@@ -186,7 +199,7 @@ async def assistant_chat_context(body: ChatContextRequest, db: Session = Depends
     question = history[-1]["content"] if history else ""
     if not question:
         raise HTTPException(status_code=422, detail="no user message provided")
-    rows, intent = assistant.retrieve(db, question)
+    rows, intent = assistant.retrieve(db, question, account=resolve_account(request))
     deterministic = assistant._deterministic_answer(rows, intent, question)
     phrased = await assistant._phrase_with_ai(question, rows, history)
     answer = phrased["answer"] if phrased else deterministic
@@ -212,32 +225,35 @@ async def assistant_chat_context(body: ChatContextRequest, db: Session = Depends
 
 
 @router.get("/assistant/history")
-def assistant_history():
-    """Recent in-memory conversation (best-effort, per backend process)."""
-    return {"messages": assistant.chat_history()}
+def assistant_history(request: Request):
+    """Recent in-memory conversation for THIS account (F-16: account-keyed)."""
+    return {"messages": assistant.chat_history(resolve_account(request))}
 
 
 @router.post("/assistant/clear")
-def assistant_clear():
+def assistant_clear(request: Request):
     """Clear the current in-memory chat (Settings: 'Clear current chat')."""
-    assistant.clear_history()
+    assistant.clear_history(resolve_account(request))
     return {"cleared": True}
 
 
 # ---- Notifications ------------------------------------------------------------
 
 @router.get("/notifications/pending")
-def notifications_pending(db: Session = Depends(get_db)):
+def notifications_pending(request: Request, db: Session = Depends(get_db)):
     enabled = service.get_setting(db, "important_notifications_enabled") == "true" \
         and service.get_setting(db, "desktop_notifications_enabled") == "true"
-    items = service.pending_notifications(db) if enabled else []
+    account = resolve_account(request)
+    items = service.pending_notifications(db, account=account) if enabled else []
     return {"enabled": enabled, "notifications": items}
 
 
 @router.post("/notifications/ack")
-def notifications_ack(body: dict, db: Session = Depends(get_db)):
+def notifications_ack(body: dict, request: Request, db: Session = Depends(get_db)):
+    """Acknowledge notifications (F-16: only THIS account's notifications)."""
     keys = [k for k in (body or {}).get("keys", []) if isinstance(k, str)]
-    return {"marked": service.mark_delivered(db, keys)}
+    account = resolve_account(request)
+    return {"marked": service.mark_delivered(db, keys, account=account)}
 
 
 # ---- Settings -------------------------------------------------------------------

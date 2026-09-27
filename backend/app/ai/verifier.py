@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from detection.rules import RiskLevel, is_risky_level
+
 logger = logging.getLogger("phishguard.ai")
 
 VALID_VERDICTS = ("SAFE", "LOW_RISK", "SUSPICIOUS", "HIGH_RISK")
@@ -136,12 +138,15 @@ def _truncate(text: str, limit: int) -> str:
 
 
 def _sanitize_for_prompt(text: str) -> str:
-    """Neutralize delimiter-escape attempts inside email-derived text."""
-    return (text or "").replace("</email_subject>", "<\\/email_subject>") \
-                        .replace("</email_body>", "<\\/email_body>") \
-                        .replace("</sender>", "<\\/sender>") \
-                        .replace("</recipient>", "<\\/recipient>") \
-                        .replace("</urls>", "<\\/urls>")
+    """Neutralize delimiter-escape attempts inside email-derived text.
+
+    F-22: delegates to the SHARED prompt-fencing sanitizer so the verifier
+    and the MailBuddy assistant cannot drift apart. Every literal closing
+    tag (any name, case, or inner whitespace) is neutralized, and all tags
+    are escaped so untrusted content can never open a new boundary either.
+    """
+    from ..utils.prompt_fencing import sanitize_untrusted
+    return sanitize_untrusted(text or "", escape_all_tags=True)
 
 
 def build_verifier_payload(
@@ -402,10 +407,10 @@ async def verify_email(payload: str) -> AIVerificationResult:
 # ---------------------------------------------------------------------------
 
 _VERDICT_TO_CLASS = {
-    "SAFE": "SAFE",
-    "LOW_RISK": "LOW RISK",
-    "SUSPICIOUS": "SUSPICIOUS",
-    "HIGH_RISK": "HIGH RISK",
+    "SAFE": RiskLevel.SAFE,
+    "LOW_RISK": RiskLevel.LOW_RISK,
+    "SUSPICIOUS": RiskLevel.SUSPICIOUS,
+    "HIGH_RISK": RiskLevel.HIGH_RISK,
 }
 
 
@@ -415,8 +420,8 @@ def is_disagreement(rule_classification: str, ai_result: AIVerificationResult) -
     if ai_result.status != "VERIFIED" or not ai_result.verdict:
         return False
     ai_class = _VERDICT_TO_CLASS[ai_result.verdict]
-    rule_risky = rule_classification in ("SUSPICIOUS", "HIGH RISK")
-    ai_risky = ai_class in ("SUSPICIOUS", "HIGH RISK")
+    rule_risky = is_risky_level(rule_classification)
+    ai_risky = is_risky_level(ai_class)
     return rule_risky != ai_risky
 
 

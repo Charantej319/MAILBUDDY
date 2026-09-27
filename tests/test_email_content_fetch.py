@@ -59,6 +59,7 @@ def _auth_client(app):
     init_db()  # ensure oauth_sessions/gmail_tokens tables exist
     from backend.app.auth.sessions import create_session
     from backend.app.models.email import GmailToken
+    from tests.conftest import api_auth_headers
 
     client = TestClient(app)
     user = f"content-test-{uuid.uuid4()}@example.com"
@@ -75,6 +76,8 @@ def _auth_client(app):
     db.close()
 
     client.cookies.set("phishguard_session", session_id)
+    # /api routes require the local bearer token (Finding 15).
+    client.headers.update(api_auth_headers())
     return client, user, session_id
 
 
@@ -218,10 +221,12 @@ def test_message_content_requires_session():
     """No session cookie → 401; tokens are never exposed."""
     from fastapi.testclient import TestClient
     from backend.app.main import app
+    from tests.conftest import api_auth_headers
 
     db = SessionLocal()
     row = _seed(db)
     client = TestClient(app)  # no cookie
+    client.headers.update(api_auth_headers())  # bearer OK, session still required
     try:
         resp = client.get(f"/api/gmail/message-content/{row.id}")
         assert resp.status_code == 401

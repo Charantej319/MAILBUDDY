@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     # Frontend base URL (OAuth callback redirects here). Must match the origin
     # registered as an Authorized JavaScript origin in Google Cloud Console.
     FRONTEND_URL: str = "http://localhost:5173"
+
+    # Local API surface hardening (desktop app): the only origins/hosts the
+    # backend considers legitimate. Derived from the registered OAuth
+    # redirect URI port so a changed port stays consistent everywhere.
+    BACKEND_PORT: int = 8000
+    LOCAL_APP_ORIGIN: str = ""  # empty -> derived from GOOGLE_REDIRECT_URI port
+    ALLOWED_LOCAL_HOSTS: list[str] = ["localhost", "127.0.0.1"]
     GOOGLE_SCOPES: list[str] = [
         "https://www.googleapis.com/auth/gmail.readonly",
     ]
@@ -87,3 +94,12 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Effective local app origin (host:port the backend is actually served on).
+# Used by the Host allowlist middleware and the OAuth redirect allowlist.
+if not settings.LOCAL_APP_ORIGIN:
+    from urllib.parse import urlparse
+
+    _redirect = urlparse(settings.GOOGLE_REDIRECT_URI)
+    _port = _redirect.port or settings.BACKEND_PORT
+    settings.LOCAL_APP_ORIGIN = f"http://localhost:{_port}"

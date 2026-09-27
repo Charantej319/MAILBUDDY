@@ -4,6 +4,7 @@ import { api } from '../services/api'
 import { formatDateTime } from '../utils/time'
 import { priorityStyle, categoryLabel, formatDeadline } from '../utils/priority'
 import { sanitizeEmailHtml, defangUrl, containsUnsafeContent } from '../utils/sanitizeHtml'
+import { getAuthStatus, authStatusMeta } from '../utils/authStatus'
 import { DetailErrorBoundary } from '../components/ErrorBoundary'
 
 /**
@@ -122,7 +123,8 @@ function EmailAnalysis({ onAskAssistant }) {
   const attachments = analysis.attachment_info || []
   const scoreColor = getScoreColor(analysis.risk_score)
   const barClass = getBarClass(analysis.classification)
-  const isThreat = analysis.classification === 'SUSPICIOUS' || analysis.classification === 'HIGH RISK'
+  // F-21: canonical ('HIGH_RISK') and legacy ('HIGH RISK') both mean threat.
+  const isThreat = analysis.classification === 'SUSPICIOUS' || analysis.classification === 'HIGH RISK' || analysis.classification === 'HIGH_RISK'
 
   const senderFindings = findings.filter(f => f.category === 'SENDER')
   const urlFindings = findings.filter(f => f.category === 'URL')
@@ -595,17 +597,18 @@ function EmailAnalysis({ onAskAssistant }) {
         </div>
         <div className="card-body">
           <div className="intel-grid" style={{ marginBottom: 'var(--space-3)' }}>
+            {/* F-24: distinct verdict states — softfail is NOT a hard failure */}
             <div className="intel-item">
               <span className="intel-label">SPF</span>
-              <span className={`intel-value ${spfStatus}`}>{spfStatus === 'pass' ? 'PASS' : spfStatus === 'fail' ? 'FAIL' : 'UNKNOWN'}</span>
+              <span className={`intel-value ${authStatusMeta(spfStatus).cls}`}>{authStatusMeta(spfStatus).label}</span>
             </div>
             <div className="intel-item">
               <span className="intel-label">DKIM</span>
-              <span className={`intel-value ${dkimStatus}`}>{dkimStatus === 'pass' ? 'PASS' : dkimStatus === 'fail' ? 'FAIL' : 'UNKNOWN'}</span>
+              <span className={`intel-value ${authStatusMeta(dkimStatus).cls}`}>{authStatusMeta(dkimStatus).label}</span>
             </div>
             <div className="intel-item">
               <span className="intel-label">DMARC</span>
-              <span className={`intel-value ${dmarcStatus}`}>{dmarcStatus === 'pass' ? 'PASS' : dmarcStatus === 'fail' ? 'FAIL' : 'UNKNOWN'}</span>
+              <span className={`intel-value ${authStatusMeta(dmarcStatus).cls}`}>{authStatusMeta(dmarcStatus).label}</span>
             </div>
           </div>
           {headerFindings.map((f, i) => (
@@ -738,29 +741,9 @@ function getTopFindings(findings) {
   return sorted.slice(0, 5)
 }
 
-function getAuthStatus(findings, protocol) {
-  const failRules = {
-    spf: ['HEADER_SPF_FAIL', 'HEADER_SPF_SOFTFAIL'],
-    dkim: ['HEADER_DKIM_FAIL', 'HEADER_DKIM_NONE'],
-    dmarc: ['HEADER_DMARC_FAIL', 'HEADER_DMARC_NONE'],
-  }
-  const passRules = {
-    spf: ['HEADER_AUTH_ALL_PASS'],
-    dkim: ['HEADER_AUTH_ALL_PASS'],
-    dmarc: ['HEADER_AUTH_ALL_PASS'],
-  }
-
-  const hasFail = findings.some(f => failRules[protocol]?.includes(f.rule_id))
-  if (hasFail) return 'fail'
-
-  // If there's an auth all pass finding, check if this specific protocol passed
-  const allPass = findings.find(f => f.rule_id === 'HEADER_AUTH_ALL_PASS')
-  if (allPass && allPass.evidence) {
-    if (allPass.evidence.includes(`${protocol.toUpperCase()}: pass`)) return 'pass'
-  }
-
-  return 'none'
-}
+// getAuthStatus moved to src/utils/authStatus.js (F-24) so the SPF/DKIM/DMARC
+// verdict derivation is unit-testable and softfail is no longer conflated with
+// hard failure.
 
 function getPrimaryIndicator(findings) {
   if (!findings || findings.length === 0) return 'None'
@@ -780,7 +763,8 @@ function getScoreColor(score) {
 
 function getBarClass(classification) {
   if (classification === 'SAFE') return 'safe'
-  if (classification === 'LOW RISK') return 'low'
+  // F-21: canonical underscore form recognized alongside the spaced form.
+  if (classification === 'LOW RISK' || classification === 'LOW_RISK') return 'low'
   if (classification === 'SUSPICIOUS') return 'suspicious'
   return 'high'
 }

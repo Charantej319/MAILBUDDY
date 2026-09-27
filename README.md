@@ -45,14 +45,15 @@ Email Input (.eml / Gmail API)
 
 ## ✨ Features
 
-- **Gmail OAuth 2.0 Integration**: Connect your Gmail account securely (read-only access)
+- **Gmail OAuth 2.0 Integration**: Connect your Gmail account securely (read-only access, encrypted token storage)
 - **.eml File Upload**: Analyze email files directly
-- **Modular Detection Engine**: 5 specialized analyzers with 40+ detection rules
+- **Modular Detection Engine**: 8 analysis layers (sender, URL, content, header, attachment, domain intelligence, cross-signal correlation, AI second opinion) with 65+ detection rules
 - **Explainable Scoring**: Every detection shows rule ID, severity, points, and evidence
 - **Risk Classification**: SAFE / LOW RISK / SUSPICIOUS / HIGH RISK
 - **React Dashboard**: Clean cybersecurity-themed interface
+- **Optional AI Second Opinion**: Groq or OpenAI-compatible/Ollama endpoints; deterministic rules always stay primary
 - **Test Dataset**: Synthetic emails for evaluation
-- **Unit Tests**: 51+ test cases covering all detection rules
+- **Unit Tests**: 450+ test cases covering detection rules and security regressions
 - **Evaluation Metrics**: Precision, recall, F1 score calculation
 
 ## 🔬 Detection Methodology
@@ -62,11 +63,15 @@ Email Input (.eml / Gmail API)
 | Category           | Max Score | Description |
 |--------------------|-----------|-------------|
 | Sender/Domain      | 20 pts    | Lookalike domains, impersonation, mismatches |
-| URL Analysis       | 30 pts    | IP URLs, shorteners, suspicious TLDs, obfuscation |
+| URL Analysis       | 25 pts    | IP URLs, shorteners, suspicious TLDs, obfuscation |
 | Content            | 20 pts    | Urgency, credentials, threats, social engineering |
-| Headers            | 15 pts    | SPF, DKIM, DMARC failures, authentication anomalies |
+| Headers            | 20 pts    | SPF, DKIM, DMARC failures, authentication anomalies |
 | Attachments        | 10 pts    | Executables, double extensions, MIME mismatches |
-| Other              | 5 pts     | Reserved for future rules |
+| Domain Intel       | 5 pts     | MX presence, lookalike/TLD intelligence |
+| Correlation        | 10 pts    | Cross-signal combinations (e.g. credentials + login URL) |
+| Other              | 5 pts     | Reserved |
+
+A hard SPF+DKIM+DMARC all-fail combination enforces a SUSPICIOUS-level floor regardless of category capping.
 
 ### Risk Classification
 
@@ -213,11 +218,28 @@ powershell -ExecutionPolicy Bypass -File packaging/build_installer.ps1
 
 ## 🧪 Testing
 
-### Run Unit Tests
+### Run Everything (backend tests, frontend build, Node tests)
 
 ```bash
-python -m pytest tests/ -v
+python scripts/run_all_tests.py
 ```
+
+### Backend Unit Tests
+
+```bash
+python -m pytest tests/ -q        # full backend suite
+python -m pytest tests/ -v        # verbose
+```
+
+### Frontend / Electron Node Tests
+
+```bash
+cd frontend && node --test src/utils/authStatus.test.js   # auth verdict unit tests
+cd desktop && npm test                                    # Electron shell tests (node --test)
+cd frontend && npm run build                              # frontend production build
+```
+
+Tests run fully offline: no live Gmail, no live DNS, no Groq, no Google OAuth.
 
 ### Run Evaluation
 
@@ -226,7 +248,7 @@ python -m pytest tests/ -v
 python datasets/create_dataset.py
 
 # Run evaluation
-python tests/evaluate.py
+python -m tests.evaluate
 ```
 
 ### Test Dataset
@@ -249,11 +271,12 @@ The evaluation calculates:
 ## 🔒 Security Considerations
 
 - **Defensive only**: Never automatically deletes, replies to, or forwards emails
-- **Static URL analysis**: URLs are analyzed without visiting them (SSRF prevention)
+- **Static URL analysis**: Email URLs are analyzed without visiting them (no HTTP requests to attacker-controlled URLs; bounded DNS MX lookups only)
 - **No execution**: Attachments are never opened or executed
-- **Token protection**: OAuth tokens handled securely, never committed
+- **Token protection**: Gmail OAuth tokens are encrypted at rest (Windows DPAPI; Fernet fallback on other platforms) and never committed, logged, or exposed to the frontend
 - **Least privilege**: Gmail API uses readonly scope
 - **Explainable**: Every finding includes evidence and explanation
+- **Account isolation**: analyses are stamped with the authenticated account and scoped per account
 
 See [documentation/SECURITY.md](documentation/SECURITY.md) for detailed security documentation.
 

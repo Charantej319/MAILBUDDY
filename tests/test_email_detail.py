@@ -72,11 +72,12 @@ def test_detail_endpoint_returns_full_record():
     """GET /api/emails/{id} must return all detail-page fields."""
     from fastapi.testclient import TestClient
     from backend.app.main import app
+    from tests.conftest import api_auth_headers
 
     db, row = _seed_analysis()
     try:
         client = TestClient(app)
-        resp = client.get(f"/api/emails/{row.id}")
+        resp = client.get(f"/api/emails/{row.id}", headers=api_auth_headers())
         assert resp.status_code == 200, resp.text
         data = resp.json()
 
@@ -107,9 +108,10 @@ def test_detail_endpoint_404_is_safe():
     """Unknown ID → 404 with a user-safe message."""
     from fastapi.testclient import TestClient
     from backend.app.main import app
+    from tests.conftest import api_auth_headers
 
     client = TestClient(app)
-    resp = client.get(f"/api/emails/{uuid.uuid4()}")
+    resp = client.get(f"/api/emails/{uuid.uuid4()}", headers=api_auth_headers())
     assert resp.status_code == 404
     detail = resp.json()["detail"]
     assert "not found" in detail.lower()

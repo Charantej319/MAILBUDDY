@@ -9,6 +9,7 @@ callers) — no real API key is needed and the real API is never contacted.
 import json
 import os
 import sys
+from datetime import timedelta
 
 import pytest
 
@@ -66,15 +67,19 @@ class TestHeuristicPriority:
         assert r["category"] == "SECURITY"
 
     def test_internship_high_with_deadline(self):
+        # The deadline must sit inside the heuristic's detection window
+        # ([now-2d, now+120d]) no matter when the test runs, so it is
+        # computed relative to today instead of hardcoded.
+        deadline_date = utc_now().date() + timedelta(days=10)
         r = heuristic.heuristic_classify(
             subject="Cybersecurity Internship - Final Selection",
             sender="CyberSecure HR", sender_email="hr@cybersecure.example",
             sender_domain="cybersecure.example",
-            body_text="Congratulations! You have been selected. Please complete your joining formalities by September 20 2026.",
+            body_text=f"Congratulations! You have been selected. Please complete your joining formalities by {deadline_date.strftime('%B %d %Y')}.",
         )
         assert r["priority"] == "HIGH"
         assert r["category"] == "INTERNSHIP"
-        assert r["deadline"] is not None
+        assert r["deadline"] == deadline_date.isoformat()
 
     def test_job_offer_high(self):
         r = heuristic.heuristic_classify(
@@ -425,9 +430,16 @@ class TestEmailContextAssistant:
         assert "Invoice due" in result["answer"]
 
     def test_clear_history(self):
-        assistant._HISTORY.append({"role": "user", "content": "x"})
-        assistant.clear_history()
-        assert assistant.chat_history() == []
+        """Updated (Session 6): F-16 made history account-keyed
+        (dict[str, deque]); the old test wrote to a process-global deque.
+        """
+        assistant._history_for("acct-1").append({"role": "user", "content": "x"})
+        assistant._history_for("acct-2").append({"role": "assistant", "content": "y"})
+        assert assistant.chat_history("acct-1") != []
+        assistant.clear_history("acct-1")
+        assert assistant.chat_history("acct-1") == []
+        # Clearing one account must not touch another account's history.
+        assert assistant.chat_history("acct-2") != []
 
     def test_clear_route_registered(self):
         from backend.app.main import app
