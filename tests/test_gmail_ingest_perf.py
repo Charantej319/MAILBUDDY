@@ -15,7 +15,6 @@ Proves, against mocked Gmail API calls (no network):
 
 import asyncio
 import base64
-import time
 import uuid
 from unittest.mock import patch
 
@@ -61,6 +60,19 @@ class FakeGmailService:
 
     instances: list = []
 
+    # F-30 deterministic concurrency instrumentation (no wall-clock timing):
+    # fetch_and_parse records how many fetches are in flight at any moment.
+    # The increment/peek/decrement around the await is fully synchronous, so
+    # on asyncio's single-threaded loop the counter is exact — no locks and
+    # no dependence on machine speed or elapsed time.
+    _in_flight = 0
+    max_in_flight = 0
+
+    @classmethod
+    def reset_concurrency_counters(cls) -> None:
+        cls._in_flight = 0
+        cls.max_in_flight = 0
+
     def __init__(self, user_email: str, fetch_delay: float = 0.0):
         self.user_email = user_email
         self.fetch_delay = fetch_delay
@@ -81,12 +93,19 @@ class FakeGmailService:
 
     async def fetch_and_parse(self, message_id: str):
         self.fetched.append(message_id)
-        if self.fetch_delay:
-            await asyncio.sleep(self.fetch_delay)
-        return _gmail_full_message(message_id), ParsedEmail(
-            sender="Alice", sender_email="alice@example.com",
-            sender_domain="example.com", subject="Hello",
-        )
+        cls = FakeGmailService
+        cls._in_flight += 1
+        if cls._in_flight > cls.max_in_flight:
+            cls.max_in_flight = cls._in_flight
+        try:
+            if self.fetch_delay:
+                await asyncio.sleep(self.fetch_delay)
+            return _gmail_full_message(message_id), ParsedEmail(
+                sender="Alice", sender_email="alice@example.com",
+                sender_domain="example.com", subject="Hello",
+            )
+        finally:
+            cls._in_flight -= 1
 
 
 @pytest.fixture(autouse=True)
@@ -144,12 +163,24 @@ class _DBCtx:
 
 @pytest.mark.asyncio
 async def test_sync_fetches_concurrently_bounded(request_ctx):
-    """10 messages × 0.05s delay: sequential ≈ 0.5s; bounded concurrency (4)
-    must finish in well under the sequential time while still capping
-    parallelism at GMAIL_FETCH_CONCURRENCY."""
+    """F-30, deterministically: sync overlaps per-message fetches but never
+    exceeds GMAIL_FETCH_CONCURRENCY.
+
+    The old version asserted a wall-clock deadline (elapsed < 80% of the
+    sequential floor), which is machine-speed dependent and failed on slower
+    hosts even with correct bounded concurrency. Instead, the fake Gmail
+    service counts in-flight fetch_and_parse calls:
+
+      - max_in_flight >= 2 proves fetches actually overlap (a serialized
+        implementation can never exceed 1, regardless of timing);
+      - max_in_flight <= GMAIL_FETCH_CONCURRENCY proves the semaphore caps
+        parallelism.
+
+    No elapsed-time measurement, no CPU-speed dependence, no thresholds.
+    """
     n = 12
     delay = 0.05
-    sequential_floor = n * delay  # what strict serialization would cost
+    FakeGmailService.reset_concurrency_counters()
     with request_ctx(fetch_delay=delay) as _:
         ids = [f"perf-{uuid.uuid4().hex[:10]}" for _ in range(n)]
 
@@ -158,23 +189,37 @@ async def test_sync_fetches_concurrently_bounded(request_ctx):
 
         with patch("backend.app.gmail.api.GmailService",
                    lambda user: _ListShim(user, fetch_delay=delay)):
-            t0 = time.perf_counter()
             resp = await gmail_api.sync_gmail(
                 request=_make_request("perf-account@example.com"),
                 max_results=n, db=SessionLocal(),
             )
-            elapsed = time.perf_counter() - t0
 
     assert resp["synced"] == n
     assert resp["skipped"] == 0
-    assert elapsed < sequential_floor * 0.8, (
-        f"fetches appear serialized: {elapsed:.3f}s >= 80% of sequential "
-        f"floor {sequential_floor:.3f}s"
+
+    svc = FakeGmailService.instances[-1]
+    # Every message was fetched exactly once through the instrumented path.
+    assert sorted(svc.fetched) == sorted(ids)
+
+    # 1) Concurrency actually occurs: at least two fetches were in flight
+    #    simultaneously. Deterministic for n > 1: the gather starts n tasks
+    #    and the semaphore admits GMAIL_FETCH_CONCURRENCY of them before any
+    #    await completes, so a serialized implementation can never reach 2.
+    max_observed = FakeGmailService.max_in_flight
+    assert max_observed >= 2, (
+        f"fetches appear serialized: max in-flight fetches = {max_observed}"
     )
+
+    # 2) Concurrency is bounded: the semaphore never admitted more than
+    #    GMAIL_FETCH_CONCURRENCY simultaneous fetches.
+    assert max_observed <= gmail_api.GMAIL_FETCH_CONCURRENCY, (
+        f"unbounded concurrency: max in-flight fetches = {max_observed} "
+        f"> GMAIL_FETCH_CONCURRENCY = {gmail_api.GMAIL_FETCH_CONCURRENCY}"
+    )
+
     # Bounded: the concurrency constant stays conservative for Gmail limits.
     assert gmail_api.GMAIL_FETCH_CONCURRENCY == 4
     # Shared connection pool was used for the loop and closed afterwards.
-    svc = FakeGmailService.instances[-1]
     assert svc.shared_client_used is True
     assert svc.closed is True
 

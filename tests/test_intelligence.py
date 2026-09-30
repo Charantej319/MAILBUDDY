@@ -65,13 +65,32 @@ def test_domain_intelligence_suspicious_tld():
 
 
 def test_domain_intelligence_caching():
-    """Test that domain intelligence results are cached."""
+    """Test that domain intelligence results are cached.
+
+    Session B note: cache hits return an equal-value COPY, not the same
+    object — per-URL Safe Browsing results (safe_browsing / URL findings)
+    are applied after cache retrieval so one email's URLs can never leak
+    into another email's cached domain intelligence. The caching
+    guarantee is that the expensive lookups are NOT repeated.
+    """
     intel = DomainIntelligence()
     clear_cache()
     result1 = intel.analyze("test-cache-domain.com")
     result2 = intel.analyze("test-cache-domain.com")
-    # Should return same object from cache
-    assert result1 is result2
+    # Cached values are reused (equal, not recomputed).
+    assert result1 == result2
+
+    # Stronger than identity: the DNS/MX work must not run twice.
+    from unittest.mock import patch as _patch
+    clear_cache()
+    with _patch.object(DomainIntelligence, "_check_dns_resolution",
+                       return_value=True) as dns_calls, \
+         _patch.object(DomainIntelligence, "_check_mx_records",
+                       return_value=False) as mx_calls:
+        intel.analyze("test-cache-domain.com")
+        intel.analyze("test-cache-domain.com")
+    assert dns_calls.call_count == 1, "domain intel was recomputed (cache miss)"
+    assert mx_calls.call_count == 1, "MX lookup was repeated (cache miss)"
     clear_cache()
     print("[PASS]  test_domain_intelligence_caching passed")
 

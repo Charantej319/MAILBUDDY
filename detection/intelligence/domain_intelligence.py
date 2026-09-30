@@ -10,6 +10,24 @@ import hashlib
 from typing import Optional
 from ..rules import Finding, Severity, Category
 
+# Session A: passive domain-age intelligence (RDAP-based, fail-safe).
+# Imported lazily at call time inside analyze() as well, so a broken
+# optional dependency chain can never prevent the core analyzers from
+# loading; the direct import here is for clarity and static analysis.
+from .domain_age import (_age_findings, clear_age_cache, get_domain_age)
+
+# Session B: optional external URL threat intelligence (Google Safe
+# Browsing). Import is fail-safe by contract: check_url NEVER raises and
+# returns UNAVAILABLE when unconfigured, so Safe Browsing can never break
+# the deterministic analyzers.
+from .threat_intel.google_safe_browsing import GoogleSafeBrowsingProvider
+from .threat_intel.base import ThreatStatus
+
+# Session C: safe TLS/certificate intelligence (evidence, not a verdict).
+# probe_tls never raises and never connects to private/local targets.
+from . import tls_intelligence
+from .tls_intelligence import probe_tls as _tls_probe, TLS_FINDING_RULES
+
 
 # Cache for domain intelligence results
 _intel_cache: dict[str, dict] = {}
@@ -186,9 +204,10 @@ def _set_cached(domain: str, result: dict):
 
 
 def clear_cache():
-    """Clear the intelligence cache."""
+    """Clear the intelligence cache (including domain-age cache, Session A)."""
     _intel_cache.clear()
     _mx_cache.clear()
+    clear_age_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -300,18 +319,38 @@ def _query_mx_records(domain: str) -> bool:
     return _run_bounded(_resolve, _DNS_TIMEOUT_SECONDS)
 
 
+# Session B: recognized Safe Browsing threat types (mirror of
+# threat_intel.base.KNOWN_THREAT_TYPES for message phrasing).
+_SB_KNOWN_TYPES = {
+    "MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE",
+    "POTENTIALLY_HARMFUL_APPLICATION",
+}
+
+
 class DomainIntelligence:
     """
     Performs passive domain intelligence lookups.
     All lookups are read-only and non-intrusive.
     """
 
-    def analyze(self, domain: str) -> dict:
+    # Session B: shared stateless provider instance (thread-safe: check_url
+    # is pure + cache-protected). Replaceable via _set_sb_provider in tests.
+    _sb_provider = None
+
+    @classmethod
+    def _get_sb_provider(cls):
+        if cls._sb_provider is None:
+            cls._sb_provider = GoogleSafeBrowsingProvider()
+        return cls._sb_provider
+
+    def analyze(self, domain: str, urls: Optional[list[str]] = None) -> dict:
         """
-        Analyze a domain and return intelligence results.
+        Analyze a domain (and optionally the email's URLs for external
+        threat intelligence) and return intelligence results.
         
         Returns dict with:
             domain, suspicious_tld, lookalike_detected, brand_impersonation,
+            domain_age (Session A), safe_browsing (Session B),
             domain_indicators, findings
         """
         if not domain:
@@ -320,7 +359,20 @@ class DomainIntelligence:
         # Check cache
         cached = _get_cached(domain)
         if cached:
-            return cached
+            # Session B: Safe Browsing is PER-URL and must NOT be served
+            # from the per-DOMAIN cache — two emails from the same sender
+            # domain usually contain different URLs. Serve the cached
+            # domain intel as a base (shallow-copy the mutable lists so
+            # the cached entry is never mutated) and run the per-URL SB
+            # lookup fresh for this email.
+            result = {
+                **cached,
+                "domain_indicators": list(cached.get("domain_indicators", [])),
+                "findings": list(cached.get("findings", [])),
+            }
+            self._apply_safe_browsing(result, urls)
+            self._apply_tls_intelligence(result, urls)
+            return result
 
         result = {
             "domain": domain,
@@ -371,11 +423,219 @@ class DomainIntelligence:
         if mx_result:
             result["domain_indicators"].append("has_mx_records")
 
+        # 7. Domain age via public RDAP (passive; Session A).
+        #    Fail-safe: get_domain_age never raises and returns 'no
+        #    evidence' on any failure (no network, unsupported TLD,
+        #    malformed response). Age findings (INTEL_YOUNG_DOMAIN /
+        #    INTEL_DOMAIN_RECENT) join the other INTEL findings and flow
+        #    into the engine through intel_result["findings"].
+        try:
+            age_result = get_domain_age(domain)
+        except Exception:
+            # Defensive: get_domain_age already fail-safes internally.
+            from .domain_age import _empty_age
+            age_result = _empty_age()
+        result["domain_age"] = age_result
+        if age_result.get("age_known"):
+            result["domain_indicators"].append(
+                f"domain_age_{age_result.get('age_category', 'unknown')}"
+            )
+
         # Generate findings
         result["findings"] = self._generate_findings(result)
 
+        # Cache BEFORE Safe Browsing: the domain cache stores only
+        # domain-derived intelligence. SB results are per-URL and are
+        # applied after cache retrieval (both on this fresh result and on
+        # every future cache hit), so one email's URLs can never leak
+        # into another email's cached domain intelligence.
         _set_cached(domain, result)
+
+        # 8. External URL threat intelligence (Session B, optional).
+        self._apply_safe_browsing(result, urls)
+
+        # 9. TLS/certificate evidence for HTTPS URLs (Session C, optional).
+        self._apply_tls_intelligence(result, urls)
         return result
+
+    # ------------------------------------------------------------------
+    # Session B: Safe Browsing integration
+    # ------------------------------------------------------------------
+
+    def _apply_safe_browsing(self, result: dict, urls) -> None:
+        """Run optional Safe Browsing lookups over the email's URLs.
+
+        - Deduplicates URLs per analysis (one request per unique URL).
+        - Only KNOWN_THREAT produces a Finding (INTEL_SAFE_BROWSING_THREAT).
+          NO_MATCH / UNAVAILABLE / ERROR are "no evidence": they are
+          recorded in the structured result and NEVER increase risk.
+        - Fail-safe by contract: check_url never raises; any unexpected
+          error here must not break the deterministic analyzers.
+        """
+        url_list = [u for u in (urls or []) if isinstance(u, str) and u.strip()]
+        result["safe_browsing"] = []
+        if not url_list:
+            return
+
+        try:
+            provider = self._get_sb_provider()
+            seen_norms: set[str] = set()
+            for url in url_list:
+                # Per-analysis dedup on the normalized lookup key.
+                from .threat_intel.google_safe_browsing import normalize_url
+                normalized = normalize_url(url)
+                if normalized is None or normalized in seen_norms:
+                    continue
+                seen_norms.add(normalized)
+                sb = provider.check_url(url)
+                result["safe_browsing"].append(sb.to_dict())
+                if sb.is_known_threat:
+                    result["findings"].append(self._sb_finding(sb))
+        except Exception:
+            # Provider trouble must never break domain intelligence.
+            if not result.get("safe_browsing"):
+                result["safe_browsing"] = [{
+                    "provider": "google_safe_browsing",
+                    "status": ThreatStatus.ERROR,
+                    "url": "", "threat_types": [],
+                    "available": False, "error": "INTEGRATION_FAILURE",
+                }]
+
+    # ------------------------------------------------------------------
+    # Session C: TLS/certificate intelligence
+    # ------------------------------------------------------------------
+
+    def _apply_tls_intelligence(self, result: dict, urls) -> None:
+        """Collect TLS certificate evidence for HTTPS URLs.
+
+        - Deduplicates by HOSTNAME per analysis (one probe per host;
+          two URLs on one host never cause two TLS handshakes).
+        - TLS_VALID / HTTP / TLS_UNAVAILABLE / TLS_ERROR are evidence
+          only: they NEVER create findings and never change the score.
+          Only expired / mismatched / invalid certificates produce
+          minimal-points INTEL findings (never a verdict of phishing).
+        - Fail-safe by contract: probe_tls never raises.
+        """
+        url_list = [u for u in (urls or []) if isinstance(u, str) and u.strip()]
+        result["tls"] = []
+        if not url_list:
+            return
+
+        try:
+            seen_hosts: set[str] = set()
+            for url in url_list:
+                from .threat_intel.google_safe_browsing import normalize_url
+                normalized = normalize_url(url)
+                if normalized is None:
+                    continue
+                from urllib.parse import urlparse as _urlparse
+                hostname = (_urlparse(normalized).hostname or "").lower()
+                if not hostname or hostname in seen_hosts:
+                    continue
+                seen_hosts.add(hostname)
+                tls = _tls_probe(url)
+                result["tls"].append(tls)
+                rule = TLS_FINDING_RULES.get(tls.get("state", ""))
+                if rule:
+                    result["findings"].append(self._tls_finding(tls, rule))
+        except Exception:
+            # TLS evidence must never break domain intelligence.
+            if not result.get("tls"):
+                result["tls"] = [{
+                    "url": "", "state": "TLS_ERROR", "hostname": "",
+                    "issuer": "", "subject_cn": "", "not_before": "",
+                    "not_after": "", "error": "INTEGRATION_FAILURE",
+                }]
+
+    @staticmethod
+    def _tls_finding(tls: dict, rule: tuple[str, float]) -> Finding:
+        """Build the minimal INTEL finding for a certificate problem.
+
+        Messages are strictly factual about the certificate; they never
+        claim the site is phishing and never claim HTTPS proves safety.
+        """
+        severity, points = rule
+        state = tls.get("state", "")
+        hostname = tls.get("hostname") or "the requested hostname"
+        if state == "TLS_EXPIRED":
+            message = "TLS certificate is expired."
+            explanation = (
+                f"The HTTPS certificate for '{hostname}' is no longer "
+                f"within its validity period. Expired certificates are "
+                "sometimes used by abandoned, misconfigured, or malicious "
+                "sites. This is one piece of evidence, not a verdict — "
+                "evaluate it together with the other indicators."
+            )
+        elif state == "TLS_HOSTNAME_MISMATCH":
+            message = ("TLS certificate hostname does not match the "
+                       "requested hostname.")
+            explanation = (
+                f"The certificate served for '{hostname}' was issued for a "
+                "different hostname. Legitimate sites rarely serve "
+                "mismatched certificates; this pattern also appears in "
+                "manipulated or fraudulent endpoints. This is evidence to "
+                "weigh, not proof of phishing."
+            )
+        else:  # TLS_INVALID
+            message = "TLS certificate validation failed."
+            explanation = (
+                f"The HTTPS certificate for '{hostname}' could not be "
+                "validated (untrusted chain or malformed certificate). "
+                "This is one piece of evidence, not a verdict."
+            )
+        return Finding(
+            rule_id=f"INTEL_{state}",
+            category=Category.INTEL,
+            severity=severity,
+            points=points,
+            message=message,
+            evidence=(f"hostname: {hostname}; state: {state}; "
+                      f"issuer: {tls.get('issuer') or 'n/a'}"),
+            explanation=explanation,
+            source="TLS handshake (passive certificate inspection)",
+        )
+
+    @staticmethod
+    def _sb_finding(sb) -> Finding:
+        """Build the INTEL finding for one confirmed Safe Browsing threat."""
+        types = list(sb.threat_types) or ["UNKNOWN"]
+        known = [t for t in types if t in _SB_KNOWN_TYPES]
+        unknown = [t for t in types if t not in _SB_KNOWN_TYPES]
+        type_summary = ", ".join(types)
+        if unknown:
+            type_summary += " (not categorized by MailBuddy)"
+        explanation = (
+            f"Google Safe Browsing, an external threat-intelligence source, "
+            f"currently reports this URL as {type_summary}. This is "
+            f"external corroboration on top of MailBuddy's own analysis, "
+            f"not a replacement for it."
+        )
+        if known:
+            explanation += "" if not unknown else (
+                " Some reported categories are not recognized by MailBuddy "
+                "and are shown verbatim rather than guessed at."
+            )
+        else:
+            explanation = (
+                f"Google Safe Browsing reports this URL under category(ies) "
+                f"{type_summary}. MailBuddy does not recognize these "
+                "categories and treats the provider's verdict as a threat "
+                "rather than assuming safety."
+            )
+        return Finding(
+            rule_id="INTEL_SAFE_BROWSING_THREAT",
+            category=Category.INTEL,
+            severity=Severity.HIGH.value,
+            points=10,
+            message=(
+                f"Google Safe Browsing reports this URL as "
+                f"{type_summary}."
+            ),
+            evidence=f"URL: {sb.url}; provider: {sb.provider}; "
+                     f"threatTypes: {', '.join(types)}",
+            explanation=explanation,
+            source="Google Safe Browsing (external)",
+        )
 
     def _empty_result(self, domain: str) -> dict:
         return {
@@ -389,6 +649,17 @@ class DomainIntelligence:
             "domain_indicators": [],
             "dns_resolves": False,
             "has_mx": False,
+            "domain_age": {
+                "age_known": False,
+                "age_days": None,
+                "creation_date": None,
+                "registrar": None,
+                "registrar_url": None,
+                "age_category": "unknown",
+                "source": None,
+            },
+            "safe_browsing": [],
+            "tls": [],
             "findings": [],
         }
 
@@ -643,6 +914,14 @@ class DomainIntelligence:
                 ),
                 source="DNS lookup",
             ))
+
+        # Domain age findings (Session A): INTEL_YOUNG_DOMAIN (MEDIUM, +8)
+        # for domains under 30 days, INTEL_DOMAIN_RECENT (LOW, +3) for
+        # domains under a year. Established/unknown domains contribute
+        # nothing — age alone never proves legitimacy or guilt.
+        age_result = result.get("domain_age")
+        if age_result:
+            findings.extend(_age_findings(age_result))
 
         # Has MX records (positive signal, carefully used)
         if result.get("has_mx", False):

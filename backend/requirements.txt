@@ -1,10 +1,11 @@
 fastapi==0.115.14
 uvicorn[standard]==0.24.0
 python-multipart==0.0.32
-python-dotenv==1.0.0
+python-dotenv==1.2.2  # fixes PYSEC-2026-2270 (dotenv rewrite symlink follow); MailBuddy only calls load_dotenv()
 pydantic-settings==2.1.0
 sqlalchemy==2.0.53
 httpx==0.25.2
 aiofiles==23.2.1
+anyio==4.14.2  # transitive via httpx/starlette/watchfiles; >=4.14.2 fixes CVE-2026-63374 and CVE-2026-64847
 cryptography>=42.0.0
 dnspython>=2.4.0

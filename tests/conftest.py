@@ -53,6 +53,29 @@ if not os.environ.get("PHISHGUARD_DATA_DIR"):
     os.makedirs(os.environ["PHISHGUARD_DATA_DIR"], exist_ok=True)
 
 
+# ── RDAP network isolation (Session A: Domain Age Intelligence) ──────
+# DomainIntelligence.analyze() now queries public RDAP endpoints for sender
+# domain age. The full suite must stay hermetic: the gate below makes every
+# real RDAP request fail safe ("no evidence") unless a test explicitly opts
+# in — the Domain Age tests patch the _http_get_json seam directly and are
+# unaffected by the gate.
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_rdap_network():
+    import detection.intelligence.domain_age as _domain_age
+    _domain_age._RDAP_NETWORK_ALLOWED = False
+    import detection.intelligence.threat_intel.google_safe_browsing as _sb
+    _sb._network_allowed = False
+    # Session C: TLS probes must never open real sockets in the suite.
+    import detection.intelligence.tls_intelligence as _tls
+    _tls._network_allowed = False
+    yield
+    _domain_age._RDAP_NETWORK_ALLOWED = True
+    _sb._network_allowed = True
+    _tls._network_allowed = True
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _guard_dev_database():
     """Fail the suite if the real backend/phishguard.db was modified.
@@ -89,6 +112,10 @@ AI_ENV_VARS = (
     "PHISHGUARD_AI_MODEL",
     "PHISHGUARD_AI_API_KEY",
     "PHISHGUARD_AI_TIMEOUT",
+    # Session B: never let a developer's real Safe Browsing key or
+    # disable-flag leak into tests (hermeticity + no real API calls).
+    "GOOGLE_SAFE_BROWSING_API_KEY",
+    "SAFE_BROWSING_ENABLED",
 )
 
 

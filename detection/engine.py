@@ -60,7 +60,10 @@ class DetectionEngine:
         has_intel = False
         if parsed_email.sender_domain:
             try:
-                intel_result = self.domain_intel.analyze(parsed_email.sender_domain)
+                intel_result = self.domain_intel.analyze(
+                    parsed_email.sender_domain,
+                    urls=list(getattr(parsed_email, "urls", []) or []),
+                )
                 if intel_result.get("findings"):
                     all_findings.extend(intel_result["findings"])
                     has_intel = True
@@ -326,6 +329,201 @@ class DetectionEngine:
                 ),
                 source="Cross-signal correlation",
             ))
+
+        # ------------------------------------------------------------------
+        # Session D: intelligence cross-signal correlation.
+        #
+        # These rules combine EXISTING findings from the intelligence layer
+        # (domain age, Safe Browsing, TLS), the URL layer (shortener,
+        # visible-link mismatch), the content layer (credential requests)
+        # and the header layer (authentication) into explicit evidence about
+        # the RELATIONSHIP between signals. Deterministic: every rule keys
+        # off concrete rule_ids already present in `findings`.
+        #
+        # Failure semantics: only CONFIRMED evidence correlates. Safe
+        # Browsing NO_MATCH / UNAVAILABLE / ERROR never appear as findings
+        # (see domain_intelligence), and TLS VALID / HTTP / UNAVAILABLE /
+        # ERROR produce no negative finding either — inability to inspect
+        # is never evidence of maliciousness.
+        #
+        # Scoring: correlation findings are ONE additional CORRELATION-
+        # category signal (cap 10 in CATEGORY_WEIGHTS). The underlying
+        # individual findings continue to score in their own categories;
+        # the cap makes raw inflation impossible and no rule removes or
+        # rewrites another finding (F-10 single-owner markers above remain
+        # the only mechanism that neutralizes duplicate combos).
+        # ------------------------------------------------------------------
+        has_new_domain = "INTEL_YOUNG_DOMAIN" in rule_ids
+        has_threat_intel = "INTEL_SAFE_BROWSING_THREAT" in rule_ids
+        _TLS_ANOMALY_RULES = ("INTEL_TLS_EXPIRED", "INTEL_TLS_HOSTNAME_MISMATCH",
+                              "INTEL_TLS_INVALID")
+        has_tls_anomaly = any(rid in rule_ids for rid in _TLS_ANOMALY_RULES)
+        has_shortener = "URL_SHORTENER" in rule_ids
+        _BRAND_RULES = ("INTEL_BRAND_IMPERSONATION", "INTEL_LOOKALIKE_DOMAIN",
+                        "SENDER_BRAND_IMPERSONATION", "SENDER_LOOKALIKE_DOMAIN")
+        has_brand = any(rid in rule_ids for rid in _BRAND_RULES)
+        has_url_deception = "URL_VISIBLE_LINK_MISMATCH" in rule_ids
+        # Rule F: EXPLICIT hard authentication failures only — softfail,
+        # neutral, none, unknown and error are weak states, never failures
+        # (same boundary as the F-6 auth floor).
+        _AUTH_HARD_FAILS = ("HEADER_SPF_FAIL", "HEADER_DKIM_FAIL",
+                            "HEADER_DMARC_FAIL")
+        has_hard_auth_failure = any(rid in rule_ids for rid in _AUTH_HARD_FAILS)
+
+        # Evidence strings quote the actual underlying finding evidence so
+        # the relevant domain/URL is identified in the correlation itself.
+        age_evidence = next((f.evidence for f in findings
+                             if f.rule_id == "INTEL_YOUNG_DOMAIN"), "")
+        sb_evidence = next((f.evidence for f in findings
+                            if f.rule_id == "INTEL_SAFE_BROWSING_THREAT"), "")
+        tls_evidence = next((f.evidence for f in findings
+                             if f.rule_id in _TLS_ANOMALY_RULES), "")
+
+        _CRED_EVIDENCE = ("Message contains a credential/account "
+                          "authentication request")
+        _SCOPE_NOTE = ("Correlation is factual evidence about signal "
+                       "relationships; the underlying findings continue to "
+                       "score in their own categories and no category cap is "
+                       "bypassed.")
+
+        def _corr(rule_id, severity, points, message, evidence, explanation):
+            correlation_findings.append(Finding(
+                rule_id=rule_id,
+                category=Category.CORRELATION,
+                severity=severity,
+                points=points,
+                message=message,
+                evidence=evidence,
+                explanation=explanation,
+                source="Cross-signal correlation",
+            ))
+
+        # Rule A: NEW_DOMAIN + CREDENTIAL_REQUEST
+        if has_credential and has_new_domain:
+            _corr(
+                "CORR_NEW_DOMAIN_CREDENTIAL_REQUEST",
+                Severity.MEDIUM.value, 3,
+                "Recently registered domain combined with a credential/account authentication request.",
+                f"{_CRED_EVIDENCE}; sender domain registration is recent"
+                + (f" ({age_evidence})" if age_evidence else ""),
+                "The sender domain was recently registered (see "
+                "INTEL_YOUNG_DOMAIN) and the message asks for credentials or "
+                "account authentication. Very new domains are "
+                "disproportionately used in credential-harvesting campaigns, "
+                "while most legitimate mail comes from long-established "
+                "domains. This describes a relationship between two observed "
+                "signals; it is not by itself proof of phishing. " + _SCOPE_NOTE,
+            )
+
+        # Rule B: NEW_DOMAIN + BRAND_IMPERSONATION
+        if has_new_domain and has_brand:
+            _corr(
+                "CORR_NEW_DOMAIN_BRAND_IMPERSONATION",
+                Severity.MEDIUM.value, 3,
+                "Recently registered domain combined with brand impersonation.",
+                "Sender domain registration is recent"
+                + (f" ({age_evidence})" if age_evidence else "")
+                + "; the domain impersonates or closely resembles a known brand",
+                "A newly registered domain that also impersonates or resembles "
+                "a known brand matches the throwaway-domain pattern: register, "
+                "impersonate, harvest, abandon. Both underlying signals remain "
+                "individually visible in this report. " + _SCOPE_NOTE,
+            )
+
+        # Rule C: THREAT_INTEL (confirmed only) + CREDENTIAL_REQUEST
+        if has_credential and has_threat_intel:
+            _corr(
+                "CORR_THREAT_CREDENTIAL_REQUEST",
+                Severity.HIGH.value, 5,
+                "Externally confirmed threat URL combined with a credential/account authentication request.",
+                f"{_CRED_EVIDENCE}; Google Safe Browsing reports a URL in this message as a current threat"
+                + (f" ({sb_evidence})" if sb_evidence else " (KNOWN_THREAT)"),
+                "At least one URL in this message is listed by Google Safe "
+                "Browsing as a current threat, and the message requests "
+                "credentials — an external, confirmed verdict combined with the "
+                "message's own request for sensitive data. Only a confirmed "
+                "provider verdict (KNOWN_THREAT) is used here: NO_MATCH, "
+                "UNAVAILABLE and ERROR are never treated as threat evidence. "
+                + _SCOPE_NOTE,
+            )
+
+        # Rule D: SHORTENER + CREDENTIAL_REQUEST
+        if has_credential and has_shortener:
+            _corr(
+                "CORR_SHORTENER_CREDENTIAL_REQUEST",
+                Severity.MEDIUM.value, 3,
+                "Link shortener combined with a credential/account authentication request.",
+                f"{_CRED_EVIDENCE}; the message contains a shortened URL that hides its true destination",
+                "The message contains a shortened link and asks for credentials. "
+                "Shorteners conceal the real destination, making it harder to "
+                "notice where a credential request actually points. This is a "
+                "relationship between two signals, not a verdict on its own. "
+                + _SCOPE_NOTE,
+            )
+
+        # Rule E: BRAND_IMPERSONATION + URL_DECEPTION + CREDENTIAL_REQUEST
+        if has_credential and has_brand and has_url_deception:
+            _corr(
+                "CORR_BRAND_URL_CREDENTIAL",
+                Severity.HIGH.value, 5,
+                "Brand impersonation, visible-link destination mismatch, and a credential request appear together.",
+                f"{_CRED_EVIDENCE}; the domain impersonates or resembles a known brand; a displayed link's visible text points to a different destination",
+                "This message displays a link that does not lead where it says, "
+                "on a domain impersonating a known brand, while requesting "
+                "credentials — a deliberate multi-layer deception chain. Each "
+                "signal is also reported individually in this report. "
+                + _SCOPE_NOTE,
+            )
+
+        # Rule F: AUTHENTICATION hard failure + CREDENTIAL_REQUEST
+        if has_credential and has_hard_auth_failure:
+            _corr(
+                "CORR_AUTH_CREDENTIAL_REQUEST",
+                Severity.HIGH.value, 5,
+                "Hard authentication failure combined with a credential/account authentication request.",
+                f"{_CRED_EVIDENCE}; SPF, DKIM, or DMARC returned an explicit hard failure",
+                "The message failed email authentication (an explicit 'fail' "
+                "verdict from SPF, DKIM or DMARC) and asks for credentials: the "
+                "message does not come from the domain it claims. Weak outcomes "
+                "(softfail, neutral, none) and unknown/error states never "
+                "trigger this correlation. " + _SCOPE_NOTE,
+            )
+
+        # Rule G: TLS_ANOMALY + CREDENTIAL_REQUEST
+        if has_credential and has_tls_anomaly:
+            tls_rule = next(rid for rid in _TLS_ANOMALY_RULES
+                            if rid in rule_ids)
+            tls_state = tls_rule.replace("INTEL_", "", 1)
+            _corr(
+                "CORR_TLS_CREDENTIAL_REQUEST",
+                Severity.MEDIUM.value, 3,
+                "TLS certificate problem combined with a credential/account authentication request.",
+                f"{_CRED_EVIDENCE}; TLS certificate state is {tls_state}"
+                + (f" ({tls_evidence})" if tls_evidence else ""),
+                f"The HTTPS certificate for a link in this message has a "
+                f"problem ({tls_state}) while the message requests credentials. "
+                "High-value login pages rarely ship expired or mismatched "
+                "certificates. A valid certificate is NOT evidence of safety, "
+                "and TLS states such as VALID, HTTP, UNAVAILABLE or ERROR are "
+                "never treated as negative evidence here. " + _SCOPE_NOTE,
+            )
+
+        # Composite: NEW_DOMAIN + BRAND_IMPERSONATION + CREDENTIAL_REQUEST
+        if has_new_domain and has_brand and has_credential:
+            _corr(
+                "CORR_NEW_DOMAIN_BRAND_CREDENTIAL",
+                Severity.HIGH.value, 5,
+                "Newly registered domain impersonating a brand while requesting credentials — composite evidence chain.",
+                f"{_CRED_EVIDENCE}; sender domain registration is recent"
+                + (f" ({age_evidence})" if age_evidence else "")
+                + "; the domain impersonates or resembles a known brand",
+                "All three signals appear together: the sender domain was "
+                "registered recently, it impersonates or resembles a known "
+                "brand, and the message requests credentials. This matches the "
+                "lifecycle of a throwaway phishing domain. The relationship is "
+                "reported as one coherent piece of evidence; the individual "
+                "findings remain independently visible. " + _SCOPE_NOTE,
+            )
 
         # Strong benign signal: legitimate domain + all auth pass + no suspicious URLs
         if (has_sender and has_header and
