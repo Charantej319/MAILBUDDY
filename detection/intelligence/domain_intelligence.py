@@ -31,6 +31,11 @@ from .tls_intelligence import probe_tls as _tls_probe, TLS_FINDING_RULES
 
 # Cache for domain intelligence results
 _intel_cache: dict[str, dict] = {}
+
+# Bounded-cache principle (same as the Session A–C caches): a long-running
+# process must not grow memory without limit. Entries expire via CACHE_TTL;
+# the size bound below is the backstop for very high distinct-domain counts.
+_INTEL_CACHE_MAX_ENTRIES = 2048
 CACHE_TTL = 3600  # 1 hour
 
 # Suspicious TLDs
@@ -196,6 +201,11 @@ def _get_cached(domain: str) -> Optional[dict]:
 
 
 def _set_cached(domain: str, result: dict):
+    # Size bound (Session A–C convention): clear when exceeded rather than
+    # growing without limit. TTL behavior, cache-key semantics and hit
+    # behavior are unchanged.
+    if len(_intel_cache) >= _INTEL_CACHE_MAX_ENTRIES:
+        _intel_cache.clear()
     key = _cache_key(domain)
     _intel_cache[key] = {
         "timestamp": time.time(),

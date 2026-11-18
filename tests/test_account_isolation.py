@@ -186,6 +186,84 @@ def test_gmail_message_content_cross_account_404():
     assert "ISOLATION-BODY-row-b" not in r.text
 
 
+# ── DELETE /api/emails/{id} account isolation (Session F repair) ────────
+
+
+def test_delete_own_row_succeeds():
+    """Account A can delete its own analysis."""
+    id_a, _ = _seed_one_row_each()
+    client_a = _auth_client(A)
+    r = client_a.delete(f"/api/emails/{id_a}")
+    assert r.status_code == 200, f"got {r.status_code}: {r.text[:200]}"
+    assert r.json()["message"] == "Analysis deleted successfully"
+    # Row is really gone.
+    db = SessionLocal()
+    assert db.query(EmailAnalysis).filter(EmailAnalysis.id == id_a).first() is None
+    db.close()
+    # And B's row is untouched by A's delete of its own row.
+    db = SessionLocal()
+    assert db.query(EmailAnalysis).filter(EmailAnalysis.id == "iso-row-b").first() is not None
+    db.close()
+
+
+def test_delete_cross_account_404():
+    """Account B cannot delete Account A's analysis."""
+    id_a, _ = _seed_one_row_each()
+    client_b = _auth_client(B)
+    r = client_b.delete(f"/api/emails/{id_a}")
+    assert r.status_code == 404, f"got {r.status_code}: {r.text[:200]}"
+    # A's row SURVIVES B's attempted delete.
+    db = SessionLocal()
+    assert db.query(EmailAnalysis).filter(EmailAnalysis.id == id_a).first() is not None
+    db.close()
+
+
+def test_delete_cross_account_matches_detail_safe_404():
+    """Cross-account DELETE and the protected detail path return the SAME
+    safe not-found behavior (status + detail), so deletion cannot be used
+    to probe whether an ID belongs to another account."""
+    id_a, _ = _seed_one_row_each()
+    client_b = _auth_client(B)
+    r_del = client_b.delete(f"/api/emails/{id_a}")
+    r_get = client_b.get(f"/api/emails/{id_a}")
+    assert r_del.status_code == r_get.status_code == 404
+    assert r_del.json()["detail"] == r_get.json()["detail"]
+    # A missing ID behaves identically to a foreign-owned ID (no oracle).
+    r_missing = client_b.delete("/api/emails/iso-does-not-exist")
+    assert r_missing.status_code == 404
+    assert r_missing.json()["detail"] == r_del.json()["detail"]
+
+
+def test_delete_row_remains_after_foreign_attempt():
+    """Explicit survivorship check: A's row still exists with its content
+    after B's delete attempt."""
+    id_a, _ = _seed_one_row_each()
+    client_b = _auth_client(B)
+    assert client_b.delete(f"/api/emails/{id_a}").status_code == 404
+    client_a = _auth_client(A)
+    r = client_a.get(f"/api/emails/{id_a}")
+    assert r.status_code == 200
+    assert "ISOLATION-BODY-row-a" in r.text
+
+
+def test_delete_legacy_null_owner_row_still_allowed():
+    """Legacy NULL-owner rows (pre-isolation desktop data) remain deletable
+    for any authenticated caller — the same rule owns_row applies to reads."""
+    db = SessionLocal()
+    legacy = _make_row("legacy-owner@example.com", "row-legacy")
+    legacy.owner_account = None
+    db.add(legacy)
+    db.commit()
+    legacy_id = legacy.id
+    db.close()
+    client_a = _auth_client(A)
+    r = client_a.delete(f"/api/emails/{legacy_id}")
+    assert r.status_code == 200
+    db = SessionLocal()
+    assert db.query(EmailAnalysis).filter(EmailAnalysis.id == legacy_id).first() is None
+    db.close()
+
+
 def test_assistant_history_is_per_account():
     from backend.app.mailbuddy import assistant
 

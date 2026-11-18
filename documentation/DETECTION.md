@@ -116,7 +116,7 @@ Each category is **capped** at its maximum, preventing any single category from 
 
 3. **Correlation matters**: Multiple correlated indicators produce stronger scores. An email with urgency language AND credential requests scores higher than either alone.
 
-4. **Static analysis**: URLs are analyzed statically without visiting them. This prevents SSRF risks but means some URL-based analysis is limited.
+4. **Static analysis with bounded intelligence lookups**: Destination webpages are never visited — no crawling, no arbitrary HTTP retrieval, no redirects, no port scanning — which prevents SSRF risks. Separately, three bounded, optional intelligence layers may perform narrowly-scoped egress: RDAP registry lookups for the sender domain's age (fixed public endpoints), a Google Safe Browsing lookup per URL (only the normalized URL is transmitted), and a TLS handshake to a URL's own hostname on port 443 (no HTTP request, private/rebinding-safe target validation). All are timeout-bounded, concurrency-bounded, cache-backed, and fail safe: inability to inspect is never evidence of maliciousness.
 
 5. **No execution**: Attachments are never opened or executed. Analysis is limited to metadata.
 

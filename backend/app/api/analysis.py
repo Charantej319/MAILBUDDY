@@ -290,12 +290,23 @@ async def get_email_analysis(
 @router.delete("/emails/{analysis_id}")
 async def delete_email_analysis(
     analysis_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    """Delete an email analysis."""
+    """Delete an email analysis.
+
+    F-16: enforces the SAME account-ownership invariant as the protected
+    detail endpoint — a row owned by another account is indistinguishable
+    from a missing row (safe 404, no existence leak). Legacy NULL-owner
+    rows remain deletable (same rule as owns_row everywhere else).
+    """
+    account = resolve_account(request)
     analysis = db.query(EmailAnalysis).filter(EmailAnalysis.id == analysis_id).first()
-    if not analysis:
-        raise HTTPException(status_code=404, detail="Analysis not found")
+    if not analysis or not owns_row(analysis, account):
+        raise HTTPException(
+            status_code=404,
+            detail="Email analysis not found. It may have been deleted.",
+        )
 
     db.delete(analysis)
     db.commit()

@@ -37,6 +37,11 @@ STEPS = [
         ROOT / "frontend",
     ),
     (
+        "Frontend evidence-chain unit tests (node --test)",
+        ["node", "--test", "src/utils/evidenceChain.test.js"],
+        ROOT / "frontend",
+    ),
+    (
         "Electron/Node tests",
         ["node", "--test"],
         ROOT / "desktop",

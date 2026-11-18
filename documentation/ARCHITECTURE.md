@@ -66,7 +66,7 @@ A modular detection system with five specialized content analyzers plus domain i
 - From/Reply-To mismatch detection
 
 #### URL Analyzer (`url_analyzer.py`)
-- Static-only URL analysis (no HTTP requests - prevents SSRF)
+- Static URL analysis only: the destination webpage is NEVER fetched or crawled (no arbitrary HTTP retrieval, no redirects, no port scanning — prevents SSRF)
 - IP address URL detection
 - URL shortener detection
 - Suspicious TLD detection
@@ -99,6 +99,29 @@ A modular detection system with five specialized content analyzers plus domain i
 #### Domain Intelligence (`intelligence/domain_intelligence.py`)
 - Bounded, cache-backed MX record resolution (dnspython) for the sender's domain
 - Brand lookalike and suspicious-TLD intelligence
+
+#### Bounded External Intelligence (`intelligence/domain_age.py`, `intelligence/threat_intel/`, `intelligence/tls_intelligence.py`)
+
+The deterministic analyzers never fetch destination webpages. On top of
+that static analysis, three OPTIONAL, tightly bounded intelligence layers
+may perform narrowly-scoped network egress:
+
+- **Domain age (RDAP)**: HTTPS GET to fixed public registry endpoints
+  (rdap.org / Verisign), sender registrable domain only. Hard timeout,
+  bounded worker pool (2), TTL cache. No arbitrary URL fetching.
+- **Google Safe Browsing**: HTTPS POST to one fixed Google API endpoint
+  carrying ONLY the normalized URL (never sender/recipient, subject,
+  body, headers, attachments or account data). No redirects, no webpage
+  retrieval, hard timeout, bounded pool (2), per-state TTL cache.
+- **TLS certificate check**: TLS handshake ONLY to port 443 of the URL's
+  own hostname — no HTTP request is sent and no content is received.
+  Connect/resign timeouts; private, loopback, link-local, reserved and
+  internal-namespace targets are refused BEFORE connecting, and the
+  resolved IP is re-vetted at connect time (DNS-rebinding safe).
+
+All three fail safe: any failure is recorded as "no evidence" and can
+never increase risk by itself. Only confirmed evidence (KNOWN_THREAT,
+real certificate faults, known domain age) produces findings.
 
 #### Cross-Signal Correlation (in `engine.py`)
 - Combines related findings (e.g. credential request + suspicious login URL) into correlation findings with anti-double-counting deduplication

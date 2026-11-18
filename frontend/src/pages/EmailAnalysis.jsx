@@ -5,6 +5,7 @@ import { formatDateTime } from '../utils/time'
 import { priorityStyle, categoryLabel, formatDeadline } from '../utils/priority'
 import { sanitizeEmailHtml, defangUrl, containsUnsafeContent } from '../utils/sanitizeHtml'
 import { getAuthStatus, authStatusMeta } from '../utils/authStatus'
+import { buildEvidenceChain, evidenceLabel, correlationParts } from '../utils/evidenceChain'
 import { DetailErrorBoundary } from '../components/ErrorBoundary'
 
 /**
@@ -133,6 +134,11 @@ function EmailAnalysis({ onAskAssistant }) {
   const attachmentFindings = findings.filter(f => f.category === 'ATTACHMENT')
   const intelFindings = findings.filter(f => f.category === 'INTEL')
   const correlationFindings = findings.filter(f => f.category === 'CORRELATION')
+
+  // Session E: evidence-chain presentation. The backend's findings and risk
+  // score remain the ONLY authoritative source — these helpers group and
+  // label them for display; nothing here recalculates risk.
+  const evidenceChain = buildEvidenceChain(findings)
 
   const topFindings = analysis.top_findings || getTopFindings(findings)
 
@@ -668,16 +674,21 @@ function EmailAnalysis({ onAskAssistant }) {
         </div>
       </div>
 
-      {/* Correlation Findings */}
+      {/* Correlation Findings — Session E evidence chain: correlations are
+          rendered as relationships BETWEEN signals (with contributors),
+          clearly distinct from the underlying evidence cards above. Each
+          correlation finding appears exactly once (never in FindingItem). */}
       {correlationFindings.length > 0 && (
         <div className="card" style={{ marginBottom: 'var(--space-4)' }}>
           <div className="card-header">
             <span className="card-title">Cross-Signal Correlation</span>
-            <span className="detail-panel-count">{correlationFindings.length} finding(s)</span>
+            <span className="detail-panel-count">
+              {evidenceChain.correlations.length} correlation(s) · {evidenceChain.underlying.length} underlying signals
+            </span>
           </div>
           <div className="card-body">
             {correlationFindings.map((f, i) => (
-              <FindingItem key={i} finding={f} />
+              <CorrelationItem key={i} finding={f} />
             ))}
           </div>
         </div>
@@ -708,10 +719,16 @@ function EmailAnalysis({ onAskAssistant }) {
 }
 
 function FindingItem({ finding }) {
+  // Session E: human-readable label when one exists for this rule; the raw
+  // rule ID stays secondary technical metadata below. The backend's own
+  // message remains authoritative and is always shown.
+  const humanLabel = evidenceLabel(finding.rule_id)
+  const hasLabel = humanLabel !== 'Security indicator'
   return (
     <div className="finding-item">
       <span className={`finding-severity ${finding.severity}`}>{finding.severity}</span>
       <div className="finding-content">
+        {hasLabel && <div style={{ fontWeight: 600, marginBottom: 2 }}>{humanLabel}</div>}
         <div className="finding-message">{finding.message}</div>
         <div className="finding-meta">
           <span className="finding-category">{finding.category}</span>
@@ -724,6 +741,43 @@ function FindingItem({ finding }) {
         )}
         {finding.evidence && (
           <div className="finding-evidence">{finding.evidence}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Session E: correlation findings render as relationships between signals —
+ * human label + summary + named contributors — clearly distinct from the
+ * underlying evidence cards. All content is rendered as text/components
+ * (never unsafe HTML), the rule ID stays secondary metadata, and the
+ * backend's points/severity are displayed, not recomputed.
+ */
+function CorrelationItem({ finding }) {
+  const parts = correlationParts(finding)
+  return (
+    <div className="finding-item">
+      <span className={`finding-severity ${parts.severity}`}>{parts.severity}</span>
+      <div className="finding-content">
+        <div style={{ fontWeight: 600, marginBottom: 2 }}>{parts.label}</div>
+        {parts.summary && <div className="finding-message">{parts.summary}</div>}
+        {parts.contributors.length > 0 && (
+          <div className="finding-explanation">
+            Combined signals: {parts.contributors.join(' + ')}
+          </div>
+        )}
+        <div className="finding-meta">
+          <span className="finding-category">{finding.category}</span>
+          <span className="finding-points">{finding.points >= 0 ? '+' : ''}{finding.points} pts</span>
+          <span className="finding-rule">{finding.rule_id}</span>
+          {finding.source && <span style={{ fontStyle: 'italic' }}>{finding.source}</span>}
+        </div>
+        {finding.explanation && (
+          <div className="finding-explanation">{finding.explanation}</div>
+        )}
+        {parts.evidenceText && (
+          <div className="finding-evidence">{parts.evidenceText}</div>
         )}
       </div>
     </div>

@@ -106,6 +106,74 @@ def test_domain_intelligence_lookalike():
     print("[PASS]  test_domain_intelligence_lookalike passed")
 
 
+# ── Bounded cache tests (Session F repair, F-AUDIT-3) ─────────────
+
+def test_intel_cache_bounded():
+    """_intel_cache must not grow without limit: inserting past the bound
+    clears it (Session A–C convention) instead of growing unbounded."""
+    import detection.intelligence.domain_intelligence as di
+
+    di._intel_cache.clear()
+    try:
+        limit = di._INTEL_CACHE_MAX_ENTRIES
+        for i in range(limit + 50):
+            di._set_cached(f"bound-test-{i}.com", {"domain": f"bound-test-{i}.com"})
+            assert len(di._intel_cache) <= limit, \
+                f"cache exceeded bound: {len(di._intel_cache)} > {limit}"
+    finally:
+        di._intel_cache.clear()
+    print("[PASS]  test_intel_cache_bounded passed")
+
+
+def test_intel_cache_ttl_expiry():
+    """TTL behavior is unchanged: an entry older than CACHE_TTL is a miss."""
+    import time as _time
+    import detection.intelligence.domain_intelligence as di
+
+    di._intel_cache.clear()
+    try:
+        di._set_cached("ttl-test-domain.com", {"domain": "ttl-test-domain.com"})
+        assert di._get_cached("ttl-test-domain.com") is not None  # fresh: hit
+        # Age the entry past the TTL.
+        key = di._cache_key("ttl-test-domain.com")
+        di._intel_cache[key]["timestamp"] -= (di.CACHE_TTL + 1)
+        assert di._get_cached("ttl-test-domain.com") is None  # expired: miss
+    finally:
+        di._intel_cache.clear()
+    print("[PASS]  test_intel_cache_ttl_expiry passed")
+
+
+def test_intel_cache_clear_cache_still_clears_all_caches():
+    """clear_cache() clears the domain cache AND the Session A age cache,
+    exactly as before the bound was added."""
+    from detection.intelligence.domain_intelligence import _intel_cache
+    from detection.intelligence import domain_age as da
+
+    clear_cache()
+    _intel_cache["seed"] = {"timestamp": 0.0, "result": {}}
+    da._age_cache["seed"] = {"timestamp": 0.0, "result": {}}
+    clear_cache()
+    assert not _intel_cache
+    assert not da._age_cache
+    print("[PASS]  test_intel_cache_clear_cache_still_clears_all_caches passed")
+
+
+def test_intel_cache_bound_preserves_hits_under_limit():
+    """Entries inserted within the bound remain retrievable (hit behavior
+    unchanged by the size bound)."""
+    import detection.intelligence.domain_intelligence as di
+
+    di._intel_cache.clear()
+    try:
+        for i in range(10):
+            di._set_cached(f"hit-test-{i}.com", {"n": i})
+        for i in range(10):
+            assert di._get_cached(f"hit-test-{i}.com") == {"n": i}
+    finally:
+        di._intel_cache.clear()
+    print("[PASS]  test_intel_cache_bound_preserves_hits_under_limit passed")
+
+
 # ── Confidence Calculation Tests ───────────────────────────────────
 
 def test_confidence_no_findings():
